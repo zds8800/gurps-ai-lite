@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question or start a conversation
+    url: https://github.com/zds8800/gurps-ai-lite/discussions
+    about: Use Discussions for questions and ideas. Open an issue only for a defined task.
