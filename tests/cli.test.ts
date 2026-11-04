@@ -133,6 +133,40 @@ test("load reports a missing file plainly", () => {
   assert.deepEqual(out[0], 'Cannot load "tests/fixtures/nobody.gcs" — unreadable or not JSON. GCS 5 sheets are JSON; re-save GCS 4 XML files in GCS 5 first.');
 });
 
+test("a fight runs end to end: foe, order, attack with a punch", () => {
+  const out = session([
+    "seed 7",
+    "load tests/fixtures/mara-voss.gcs",
+    "foe tests/fixtures/edge-case.gcs",
+    "order",
+    "attack brawling",
+  ]);
+  assert.ok(out.some((l) => l.startsWith("Edge Case loaded as your foe")));
+  assert.ok(out.some((l) => l.startsWith("Turn order by Basic Speed (p. 24): Mara Voss, Edge Case"))); // 5.5 vs 5
+  assert.ok(out.some((l) => /^Mara Voss attacks with Brawling \(1d-3 cr\)/.test(l)));
+  assert.ok(out.some((l) => /^Edge Case defends: /.test(l)));
+});
+
+test("attack needs a fight and a damage source", () => {
+  const out = session([
+    "new M",
+    "learn stealth 4",
+    "attack stealth", // no foe
+    "foe tests/fixtures/edge-case.gcs",
+    "attack stealth", // stealth is not an unarmed skill: needs dmg
+    "attack stealth dmg 2d cut vs dodge",
+  ]);
+  assert.deepEqual(out[2], "No fight yet. Load yourself (new/load) and a foe: foe <file>.");
+  assert.ok(
+    out.some(
+      (l) =>
+        l ===
+        "Give the weapon's damage: attack stealth dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).",
+    ),
+  );
+  assert.ok(out.some((l) => l.startsWith("M attacks with Stealth (2d cut)")));
+});
+
 test("an imported sheet with unprinted point totals explains instead of crashing", () => {
   const out = session(["load tests/fixtures/edge-case.gcs", "sheet", "test stealth"]);
   const sheetLine = out.find((l) => l.startsWith("  Stealth (DX/A) 3 points:"));
