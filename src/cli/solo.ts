@@ -23,6 +23,16 @@ import { rollOdds } from "../core/odds.ts";
 import { resolve } from "../core/success-roll.ts";
 import { quickContest } from "../core/quick-contest.ts";
 import { SeededDice, SystemDice } from "../core/dice.ts";
+import { parseDicePool, formatDicePool } from "../core/dice-pool.ts";
+import { strengthDamage } from "../model/secondary.ts";
+import {
+  attackExchange,
+  bestDefense,
+  makeCombatant,
+  narrate,
+  turnOrder,
+} from "../combat/attack.ts";
+import type { Combatant, DamageType, DefenseChoice } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
 
@@ -30,12 +40,14 @@ export interface SoloState {
   registry: Registry;
   character: Character | null;
   dice: DiceSource;
+  /** Set by the foe command: you and your opponent as combatants (HP tracked). */
+  combat: { you: Combatant; foe: Combatant } | null;
 }
 
 export function makeSoloState(): SoloState {
   const registry = new Registry();
   registry.load(LITE_CORE);
-  return { registry, character: null, dice: new SystemDice() };
+  return { registry, character: null, dice: new SystemDice(), combat: null };
 }
 
 const ATTRIBUTE_IDS = ["ST", "DX", "IQ", "HT"] as const;
@@ -90,6 +102,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       const name = args.join(" ").trim();
       if (!name) return ["Usage: new <name>"];
       state.character = makeCharacter(name.toLowerCase(), name);
+      state.combat = null;
       const a = state.character.attributes;
       return [`${name} created. ST ${a.ST} DX ${a.DX} IQ ${a.IQ} HT ${a.HT}. 0 points spent.`];
     }
@@ -106,6 +119,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       try {
         const result = importGcsSheet(parsed, state.registry);
         state.character = result.character;
+        state.combat = null;
         const c = result.character;
         const lines = [
           `${c.name} loaded from file. ST ${c.attributes.ST} DX ${c.attributes.DX} IQ ${c.attributes.IQ} HT ${c.attributes.HT}. ` +
@@ -370,6 +384,135 @@ export function runCommand(state: SoloState, line: string): string[] {
       );
     }
 
+    case "foe": {
+      if (!state.character) return ["No character yet. Use: new <name> or load <file> first."];
+      const file = args.join(" ").trim();
+      if (!file) return ["Usage: foe <path to .gcs file>"];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(file, "utf-8"));
+      } catch {
+        return [`Cannot load "${file}" — unreadable or not JSON.`];
+      }
+      try {
+        const result = importGcsSheet(parsed, state.registry);
+        state.combat = { you: makeCombatant(state.character), foe: makeCombatant(result.character) };
+        const order = turnOrder([state.combat.you, state.combat.foe]);
+        const lines = [
+          `${result.character.name} loaded as your foe (HP ${state.combat.foe.hp}).`,
+          `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
+        ];
+        lines.push(...result.notes.map((note) => `Note: ${note}`));
+        return lines;
+      } catch (error) {
+        return [(error as Error).message];
+      }
+    }
+
+    case "order": {
+      if (!state.combat) return ["No fight yet. Use: foe <path to .gcs file>"];
+      const order = turnOrder([state.combat.you, state.combat.foe]);
+      return [
+        `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
+        `HP: ${state.combat.you.character.name} ${state.combat.you.hp}, ${state.combat.foe.character.name} ${state.combat.foe.hp}.`,
+      ];
+    }
+
+    case "attack": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      // attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [+n or -n ...]
+      const skillWords: string[] = [];
+      const modTokens: string[] = [];
+      let damage: { poolText: string; type: string } | null = null;
+      let defenseChoice: DefenseChoice | null = null;
+      for (let i = 0; i < args.length; i++) {
+        const t = args[i];
+        if (t.toLowerCase() === "dmg" && i + 2 < args.length + 1) {
+          damage = { poolText: args[i + 1] ?? "", type: (args[i + 2] ?? "").toLowerCase() };
+          i += 2;
+        } else if (t.toLowerCase() === "vs") {
+          defenseChoice = (args[i + 1] ?? "").toLowerCase() as DefenseChoice;
+          i += 1;
+        } else if (/^[+-]\d+$/.test(t)) {
+          modTokens.push(t);
+        } else {
+          skillWords.push(t);
+        }
+      }
+      const found = findSkillRef(state, skillWords.join(" "));
+      if (typeof found === "string") return [found];
+      const mods = parseModifiers(modTokens);
+      if (typeof mods === "string") return [mods];
+
+      let base: number | null;
+      try {
+        base = baseSkillLevel(state.combat.you.character, found);
+      } catch (error) {
+        return [(error as Error).message];
+      }
+      if (base === null) return [`${displayName(found)} has no default (p. 13). You cannot attempt it untrained.`];
+
+      // Damage: explicit "dmg 2d+1 cut", or an unarmed punch (thr-1 cr, p. 26).
+      let pool;
+      let type: DamageType;
+      if (damage) {
+        try {
+          pool = parseDicePool(damage.poolText);
+        } catch (error) {
+          return [(error as Error).message];
+        }
+        if (!["cr", "cut", "imp", "pi-", "pi", "pi+"].includes(damage.type)) {
+          return [`Bad damage type "${damage.type}". Use cr, cut, imp, pi-, pi or pi+ (p. 29).`];
+        }
+        type = damage.type as DamageType;
+      } else if (found.id === "brawling" || found.id === "karate") {
+        const thrust = strengthDamage(state.combat.you.character.attributes.ST, "thrust");
+        pool = { dice: thrust.dice, adds: thrust.adds - 1 }; // punch: thr-1 cr (p. 26)
+        type = "cr";
+      } else {
+        return [`Give the weapon's damage: attack ${skillWords.join(" ")} dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).`];
+      }
+
+      // The foe defends with the named defense, or its best available one.
+      const foe = state.combat.foe;
+      const parrySkillId = foe.character.skills.find((r) => {
+        const def = state.registry.skill(r.skillId);
+        return def?.combat && r.points > 0;
+      })?.skillId;
+      let choice: DefenseChoice;
+      if (defenseChoice) {
+        if (!["dodge", "block", "parry", "none"].includes(defenseChoice)) {
+          return [`Bad defense "${defenseChoice}". Use dodge, block, parry or none (p. 28).`];
+        }
+        choice = defenseChoice;
+      } else {
+        const best = bestDefense(state.registry, foe.character, { parrySkillId });
+        if (!best) return [`${foe.character.name} has no active defense available.`];
+        choice = best.choice;
+      }
+
+      const outcome = attackExchange(
+        {
+          attacker: state.combat.you,
+          attackSkill: base,
+          attackModifiers: mods,
+          damage: pool,
+          damageType: type,
+          defender: foe,
+          defense: choice,
+          defenseContext: { parrySkillId },
+        },
+        state.registry,
+        state.dice,
+      );
+      return narrate(outcome, {
+        attacker: state.combat.you.character.name,
+        defender: foe.character.name,
+        attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
+        defense: choice,
+      });
+    }
+
     case "help":
       return [
         "Commands:",
@@ -382,6 +525,9 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
         "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
+        "  foe <path>            Load an opponent from a .gcs file and start a fight.",
+        "  order                 Show turn order and current HP.",
+        "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
         "  help, quit",

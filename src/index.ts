@@ -41,6 +41,33 @@ export type {
 export { baseSkillLevel, defaultLevel } from "./model/defaults.ts";
 export { importGcsSheet } from "./model/gcs.ts";
 export type { GcsImport } from "./model/gcs.ts";
+export {
+  basicMove,
+  basicSpeed,
+  dodgeScore,
+  fatiguePoints,
+  hitPoints,
+  strengthDamage,
+} from "./model/secondary.ts";
+export { formatDicePool, parseDicePool, rollDicePool } from "./core/dice-pool.ts";
+export type { DicePool } from "./core/dice-pool.ts";
+export {
+  attackExchange,
+  basicDamage,
+  bestDefense,
+  defenseScore,
+  injuryFrom,
+  makeCombatant,
+  turnOrder,
+} from "./combat/attack.ts";
+export type {
+  AttackOutcome,
+  AttackSetup,
+  Combatant,
+  DamageType,
+  DefenseChoice,
+  DefenseContext,
+} from "./combat/attack.ts";
 export { Registry } from "./modules/loader.ts";
 export type { RulesModule } from "./modules/loader.ts";
 export { findSkill, LITE_CORE, LITE_SKILLS } from "./modules/lite-core/index.ts";
