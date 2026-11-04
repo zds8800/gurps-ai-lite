@@ -85,11 +85,10 @@ What someone asks the engine to do. Everything is explicit so a roll can be repl
 | request | SuccessRoll | Link back to what was asked. |
 | status | "rolled" , "not-allowed" | See the low-skill rule in section 4. |
 | effectiveSkill | number | Base plus modifiers (R3). |
-| dice | [n, n, n] | The three dice. |
 | total | number | 3 to 18. |
 | success | boolean | |
 | critical | "none", "success", "failure" | |
-| margin | number | Effective skill minus total. Positive on success, negative on failure (p. 2). |
+| margin | number | Margin of success is effective skill minus total; margin of failure is total minus effective skill (p. 2). Negative only under decision D2 (automatic results). |
 | trace | string[] | Optional reasons, built only when asked (see section 6). |
 
 Links: RollResult holds its SuccessRoll; SuccessRoll names a Character and one Skill or Attribute; Skill points at an Attribute; Character owns Attributes and SkillRecords.
@@ -146,7 +145,7 @@ interface DiceSource {
 Three implementations:
 
 - **SeededDice(seed)**: a small 32-bit generator (mulberry32 or xoshiro128, both a few integer operations). Same seed gives the same sequence on any machine, so a simulation loop repeats exactly. It keeps one integer of state, so it can be saved and restored mid-run (`getState()` / `setState()`).
-- **ScriptedDice(values[])**: returns a fixed list of dice, for tests. This is how the test cases pin an exact roll (the research found the same idea in gurps-combat-engine, which we read and do not copy because it has no license).
+- **ScriptedDice(values[])**: returns a fixed list of 3d totals, for tests. This is how the test cases pin an exact roll (the research found the same idea in gurps-combat-engine, which we read and do not copy because it has no license). Individual dice are not tracked anywhere: no mechanic in GURPS uses per-die values, only totals.
 - **SystemDice**: wraps crypto random for real play when no seed is given.
 
 Each die uses the top bits of the generator and rejection to avoid bias. For speed, `roll3d()` draws one 32-bit number and splits it into three dice (rejecting the few values that would bias a six-sided split).

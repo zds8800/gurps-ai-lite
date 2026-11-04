@@ -35,8 +35,6 @@ export interface RollResult {
   status: RollStatus;
   /** Base skill plus modifiers. Null when there is no usable skill at all. */
   effectiveSkill: number | null;
-  /** The three dice, when the source tracks them; null for scripted totals. */
-  dice: [number, number, number] | null;
   /** 3d total, 3 to 18. Null when no dice were thrown. */
   total: number | null;
   success: boolean;

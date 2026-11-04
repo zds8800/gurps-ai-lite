@@ -11,8 +11,6 @@ export interface DiceSource {
   d6(): number;
   /** Three six-sided dice added together, 3 to 18. */
   roll3d(): number;
-  /** The three individual dice of the last roll3d(), if this source tracks them. */
-  lastDice?(): [number, number, number] | null;
 }
 
 /** Largest multiple of 6 below 2^32; draws at or above this are rejected. */
@@ -21,7 +19,6 @@ const REJECT_AT = 4294967292; // Math.floor(2 ** 32 / 6) * 6
 /** mulberry32: one 32-bit state word, a few integer ops per draw. */
 export class SeededDice implements DiceSource {
   private state: number;
-  private last: [number, number, number] | null = null;
 
   constructor(seed: number) {
     this.state = seed >>> 0;
@@ -35,7 +32,6 @@ export class SeededDice implements DiceSource {
   /** Resume a saved run exactly where it left off. */
   setState(state: number): void {
     this.state = state >>> 0;
-    this.last = null;
   }
 
   private next32(): number {
@@ -54,15 +50,9 @@ export class SeededDice implements DiceSource {
   }
 
   roll3d(): number {
-    const a = this.d6();
-    const b = this.d6();
-    const c = this.d6();
-    this.last = [a, b, c];
-    return a + b + c;
-  }
-
-  lastDice(): [number, number, number] | null {
-    return this.last;
+    // Per-die values are not kept: no GURPS mechanic needs them, and the
+    // caller asked the engine to track totals only.
+    return this.d6() + this.d6() + this.d6();
   }
 
   /**
@@ -86,8 +76,7 @@ export class SeededDice implements DiceSource {
 
 /**
  * Tests feed exact totals. values are consumed one per roll3d(); a value must
- * be a valid 3d total (3 to 18). Individual dice are not tracked, so results
- * built from scripted rolls have dice: null. Running out of values is an error.
+ * be a valid 3d total (3 to 18). Running out of values is an error.
  */
 export class ScriptedDice implements DiceSource {
   private readonly values: readonly number[];
@@ -124,16 +113,10 @@ export class ScriptedDice implements DiceSource {
     }
     return v;
   }
-
-  lastDice(): [number, number, number] | null {
-    return null;
-  }
 }
 
-/** Real dice for solo play when no seed is given. Unbiased via crypto.randomInt. */
+/** Real dice for solo play when no seed is given. Unbiased via crypto random. */
 export class SystemDice implements DiceSource {
-  private last: [number, number, number] | null = null;
-
   d6(): number {
     // globalThis.crypto is available in all supported Node versions and browsers.
     const buf = new Uint32Array(1);
@@ -146,14 +129,6 @@ export class SystemDice implements DiceSource {
   }
 
   roll3d(): number {
-    const a = this.d6();
-    const b = this.d6();
-    const c = this.d6();
-    this.last = [a, b, c];
-    return a + b + c;
-  }
-
-  lastDice(): [number, number, number] | null {
-    return this.last;
+    return this.d6() + this.d6() + this.d6();
   }
 }

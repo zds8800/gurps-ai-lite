@@ -39,13 +39,12 @@ test("split streams are deterministic and independent", () => {
   assert.equal(new Set(a1).size > 1, true);
 });
 
-test("every total stays inside 3 to 18", () => {
+test("every total stays inside 3 to 18 and every d6 inside 1 to 6", () => {
   const dice = new SeededDice(7);
   for (let i = 0; i < 10000; i++) {
     const t = dice.roll3d();
     assert.ok(t >= 3 && t <= 18, `total ${t} out of range`);
-    const [a, b, c] = dice.lastDice()!;
-    assert.equal(a + b + c, t);
-    for (const d of [a, b, c]) assert.ok(d >= 1 && d <= 6);
+    const d = dice.d6();
+    assert.ok(d >= 1 && d <= 6, `d6 ${d} out of range`);
   }
 });
