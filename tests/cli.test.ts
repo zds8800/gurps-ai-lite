@@ -89,6 +89,36 @@ test("contest usage errors are plain", () => {
   assert.deepEqual(out[2], 'Bad opponent skill "abc". Give their effective skill as a number.');
 });
 
+test("formula explains a skill with a default", () => {
+  const out = session(["formula interrogation"]);
+  assert.deepEqual(out[0], "Interrogation (IQ, Average), Lite p. 15.");
+  assert.deepEqual(out[1], "Default: IQ-5 (p. 13).");
+  assert.deepEqual(out[2], "Costs (points = level): 1 = IQ-1, 2 = IQ+0, 4 = IQ+1, 8 = IQ+2, then +4 points per extra level.");
+  assert.equal(out.length, 3); // no character loaded: no character line
+});
+
+test("formula reports no-default skills as untrainable by default", () => {
+  const out = session(["formula karate"]);
+  assert.deepEqual(out[1], "Default: none — you cannot attempt this skill untrained (p. 13).");
+});
+
+test("formula shows the loaded character's level, trained or default", () => {
+  const out = session(["new Mara", "set IQ 12", "learn stealth 4", "formula stealth", "formula lockpicking"]);
+  assert.deepEqual(
+    out.at(-5), // last line of the stealth block (4 lines), before lockpicking's 4
+    "Mara (DX 10): trained at 4 points, DX+1 = level 11.",
+  );
+  assert.deepEqual(
+    out.at(-1),
+    "Mara (IQ 12): untrained, default IQ-5 = level 7.",
+  );
+});
+
+test("formula on an attribute gets a plain note", () => {
+  const out = session(["formula ST"]);
+  assert.deepEqual(out[0], "ST is a basic attribute: its level is just its score (p. 4). Skills based on it add a relative level.");
+});
+
 test("the CLI runs as a process with piped commands", () => {
   const soloPath = fileURLToPath(new URL("../src/cli/solo.ts", import.meta.url));
   const output = execFileSync(

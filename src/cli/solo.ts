@@ -71,6 +71,11 @@ function formatMods(mods: Modifier[]): string {
   return `, modifier${mods.length > 1 ? "s" : ""} ${parts.join(" ")}`;
 }
 
+/** Relative level with an explicit sign, e.g. +0, -1, +2. */
+function relSigned(rel: number): string {
+  return rel >= 0 ? `+${rel}` : `${rel}`;
+}
+
 /** Run one command line. Returns the lines to print. */
 export function runCommand(state: SoloState, line: string): string[] {
   const trimmed = line.trim();
@@ -122,6 +127,49 @@ export function runCommand(state: SoloState, line: string): string[] {
         `${displayName(found)} (${found.attribute}, ${DIFFICULTY_NAME[found.difficulty]}) at ${points} points: ` +
           `${found.attribute} ${attrLevel} ${relText} = ${attrLevel + relative}.`,
       ];
+    }
+
+    case "formula": {
+      const word = args.join(" ").trim();
+      if (!word) return ["Usage: formula <skill>"];
+      const attr = word.toUpperCase() as AttributeId;
+      if (ATTRIBUTE_IDS.includes(attr)) {
+        return [`${attr} is a basic attribute: its level is just its score (p. 4). Skills based on it add a relative level.`];
+      }
+      const found = findSkillRef(state, word);
+      if (typeof found === "string") return [found];
+
+      const diffName = DIFFICULTY_NAME[found.difficulty];
+      const lines = [`${displayName(found)} (${found.attribute}, ${diffName}), Lite p. ${found.page}.`];
+      if (found.defaults.length === 0) {
+        lines.push("Default: none — you cannot attempt this skill untrained (p. 13).");
+      } else {
+        lines.push(`Default: ${found.defaults.map((d) => `${d.from}${d.penalty}`).join(", ")} (p. 13).`);
+      }
+      // Printed cost ladder (p. 13): 1, 2, 4, 8 points, then +4 per extra level.
+      const rungs = [1, 2, 4, 8].map(
+        (pts) => `${pts} = ${found.attribute}${relSigned(pointsToRelativeLevel(pts, found.difficulty))}`,
+      );
+      lines.push(`Costs (points = level): ${rungs.join(", ")}, then +4 points per extra level.`);
+
+      if (state.character) {
+        const c = state.character;
+        const record = c.skills.find((r) => r.skillId === found.id);
+        const attrLevel = c.attributes[found.attribute];
+        if (record && record.points > 0) {
+          const rel = pointsToRelativeLevel(record.points, found.difficulty);
+          lines.push(
+            `${c.name} (${found.attribute} ${attrLevel}): trained at ${record.points} points, ` +
+              `${found.attribute}${relSigned(rel)} = level ${attrLevel + rel}.`,
+          );
+        } else if (found.defaults.length > 0) {
+          const level = baseSkillLevel(c, found);
+          lines.push(
+            `${c.name} (${found.attribute} ${attrLevel}): untrained, default ${found.defaults[0].from}${found.defaults[0].penalty} = level ${level}.`,
+          );
+        }
+      }
+      return lines;
     }
 
     case "sheet": {
@@ -288,6 +336,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  sheet                 Print attributes, skills and point total.",
         "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
         "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
+        "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
