@@ -88,7 +88,7 @@ export function pointsToRelativeLevel(
       if (mode === "round-down") return DIFFICULTY_OFFSET[difficulty] + (rung - 1);
       if (mode === "round-up") return DIFFICULTY_OFFSET[difficulty] + rung;
       throw new Error(
-        `${points} points is not a purchasable cost for a ${difficultyName(difficulty)} skill ` +
+        `${points} points is not a purchasable cost for ${difficultyArticle(difficulty)} ${difficultyName(difficulty)} skill ` +
           `(Lite p. 13 prints 1, 2, 4, 8, then +4 per extra level). Nearest valid: ` +
           `${label(rung - 1)} or ${label(rung)}. Fix the sheet to one of those, ` +
           `or pass "round-down" / "round-up" to choose automatically.`,
@@ -99,6 +99,10 @@ export function pointsToRelativeLevel(
 
 function difficultyName(d: Difficulty): string {
   return d === "E" ? "Easy" : d === "A" ? "Average" : "Hard";
+}
+
+function difficultyArticle(d: Difficulty): string {
+  return d === "H" ? "a" : "an";
 }
 
 function formatRel(rel: number): string {

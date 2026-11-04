@@ -204,21 +204,21 @@ Mara created. ST 10 DX 10 IQ 10 HT 10. 0 points spent.
 > set DX 12
 DX 12 (cost 40 points).
 > learn lockpicking 2
-Lockpicking (IQ, Average) at 2 points: IQ 10 + 1 = 11.
+Lockpicking (IQ, Average) at 2 points: IQ 10 + 0 = 10.
 > test lockpicking -2
-Lockpicking 11, modifier -2, effective skill 9.
-Rolled 3d: 4 + 3 + 5 = 12.
-Failure by 3. (margin -3)
+Lockpicking 10, modifier -2, effective skill 8.
+Rolled 3d: 9.
+Failure by 1.
 > test lockpicking
-Lockpicking 11. Rolled 3d: 2 + 3 + 4 = 9.
-Success by 2. (margin +2)
+Lockpicking 10. Rolled 3d: 9.
+Success by 1.
 > test lockpicking -9
-Effective skill 2 is below 3. You may not attempt this roll (p. 2).
+Effective skill 1 is below 3. You may not attempt this roll (p. 2).
 > odds lockpicking
-Effective skill 11: 62.5% success, 1.9% critical success, 1.9% critical failure.
+Effective skill 10: 50.0% success, 1.9% critical success, 1.9% critical failure.
 ```
 
-The odds line is worked from the 216 outcomes of 3d: 135 totals are 11 or under (62.5%). Critical success at skill 11 is a 3 or 4 (4 outcomes, 1.9%). Critical failure is a 17 or 18 (4 outcomes, 1.9%), because 17 counts at skill 15 or less.
+The odds line is worked from the 216 outcomes of 3d: 108 totals are 10 or under (50%). Critical success at skill 10 is a 3 or 4 (4 outcomes, 1.9%). Critical failure is a 17 or 18 (4 outcomes, 1.9%), because 17 counts at skill 15 or less.
 
 Same commands can be fed from a file, so an AI or a script can play the same game.
 
