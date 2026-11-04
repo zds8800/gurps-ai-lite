@@ -1,0 +1,33 @@
+{
+  "version": 4,
+  "id": "B1c2d3e4f5a6879900112233445566",
+  "total_points": 50,
+  "profile": {
+    "name": "Bookish",
+    "notes": "Synthetic fixture for the two-way combat tests (issue #21): a character with no trained combat skill, so a chosen parry must be refused plainly."
+  },
+  "attributes": [
+    { "attr_id": "st", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "dx", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "iq", "adj": 1, "calc": { "value": 11, "points": 20 } },
+    { "attr_id": "ht", "adj": 0, "calc": { "value": 10, "points": 0 } }
+  ],
+  "skills": [
+    {
+      "type": "skill",
+      "name": "Research",
+      "difficulty": "iq/a",
+      "points": 2,
+      "reference": "L16",
+      "calc": { "level": 11, "relative_level": "IQ+0", "points": 2 }
+    },
+    {
+      "type": "skill",
+      "name": "Acting",
+      "difficulty": "iq/a",
+      "points": 1,
+      "reference": "L13",
+      "calc": { "level": 10, "relative_level": "IQ-1", "points": 1 }
+    }
+  ]
+}

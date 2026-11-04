@@ -161,10 +161,44 @@ test("attack needs a fight and a damage source", () => {
     out.some(
       (l) =>
         l ===
-        "Give the weapon's damage: attack stealth dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).",
+        "Give the weapon's damage: ... dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).",
     ),
   );
   assert.ok(out.some((l) => l.startsWith("M attacks with Stealth (2d cut)")));
+});
+
+test("the foe can attack and your chosen defense is used", () => {
+  const out = session([
+    "seed 7",
+    "load tests/fixtures/mara-voss.gcs",
+    "foe tests/fixtures/edge-case.gcs",
+    "defend parry",
+    "foeattack broadsword dmg 1d+1 cut",
+    "foedefend dodge",
+    "attack brawling",
+    "order",
+  ]);
+  // Mara parries with her trained Brawling; the choice sticks as her policy.
+  assert.ok(out.some((l) => l === "Mara Voss will parry (parry 8) until you change it."));
+  // The foe swings, and Mara defends with the policy you set, not "best".
+  assert.ok(out.some((l) => /^Edge Case attacks with Melee Weapon: Broadsword \(1d\+1 cut\)/.test(l)));
+  assert.ok(out.some((l) => /^Mara Voss defends: parry 8/.test(l)));
+  // foedefend pins the foe to dodge, and order shows both policies.
+  assert.ok(out.some((l) => l === "Edge Case will dodge (dodge 8) until you change it."));
+  assert.ok(out.some((l) => l === "Defenses: Mara Voss parry, Edge Case dodge."));
+});
+
+test("a chosen defense that does not exist is refused, not silently swapped", () => {
+  const out = session([
+    "load tests/fixtures/bookish.gcs", // no trained combat skill
+    "foe tests/fixtures/edge-case.gcs",
+    "defend parry", // refused: parry needs a trained combat skill
+    "defend dodge",
+    "foeattack broadsword dmg 1d+1 cut",
+  ]);
+  assert.ok(out.some((l) => l === "Bookish cannot parry — no usable parry skill (p. 28)."));
+  assert.ok(out.some((l) => l === "Bookish will dodge (dodge 8) until you change it."));
+  assert.ok(out.some((l) => /^Bookish defends: dodge 8/.test(l)));
 });
 
 test("an imported sheet with unprinted point totals explains instead of crashing", () => {
