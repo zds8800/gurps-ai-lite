@@ -19,6 +19,7 @@ import { Registry } from "../modules/loader.ts";
 import { LITE_CORE } from "../modules/lite-core/index.ts";
 import { rollOdds } from "../core/odds.ts";
 import { resolve } from "../core/success-roll.ts";
+import { quickContest } from "../core/quick-contest.ts";
 import { SeededDice, SystemDice } from "../core/dice.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
@@ -68,6 +69,11 @@ function formatMods(mods: Modifier[]): string {
   if (mods.length === 0) return "";
   const parts = mods.map((m) => (m.value >= 0 ? `+${m.value}` : `${m.value}`));
   return `, modifier${mods.length > 1 ? "s" : ""} ${parts.join(" ")}`;
+}
+
+/** Relative level with an explicit sign, e.g. +0, -1, +2. */
+function relSigned(rel: number): string {
+  return rel >= 0 ? `+${rel}` : `${rel}`;
 }
 
 /** Run one command line. Returns the lines to print. */
@@ -121,6 +127,49 @@ export function runCommand(state: SoloState, line: string): string[] {
         `${displayName(found)} (${found.attribute}, ${DIFFICULTY_NAME[found.difficulty]}) at ${points} points: ` +
           `${found.attribute} ${attrLevel} ${relText} = ${attrLevel + relative}.`,
       ];
+    }
+
+    case "formula": {
+      const word = args.join(" ").trim();
+      if (!word) return ["Usage: formula <skill>"];
+      const attr = word.toUpperCase() as AttributeId;
+      if (ATTRIBUTE_IDS.includes(attr)) {
+        return [`${attr} is a basic attribute: its level is just its score (p. 4). Skills based on it add a relative level.`];
+      }
+      const found = findSkillRef(state, word);
+      if (typeof found === "string") return [found];
+
+      const diffName = DIFFICULTY_NAME[found.difficulty];
+      const lines = [`${displayName(found)} (${found.attribute}, ${diffName}), Lite p. ${found.page}.`];
+      if (found.defaults.length === 0) {
+        lines.push("Default: none — you cannot attempt this skill untrained (p. 13).");
+      } else {
+        lines.push(`Default: ${found.defaults.map((d) => `${d.from}${d.penalty}`).join(", ")} (p. 13).`);
+      }
+      // Printed cost ladder (p. 13): 1, 2, 4, 8 points, then +4 per extra level.
+      const rungs = [1, 2, 4, 8].map(
+        (pts) => `${pts} = ${found.attribute}${relSigned(pointsToRelativeLevel(pts, found.difficulty))}`,
+      );
+      lines.push(`Costs (points = level): ${rungs.join(", ")}, then +4 points per extra level.`);
+
+      if (state.character) {
+        const c = state.character;
+        const record = c.skills.find((r) => r.skillId === found.id);
+        const attrLevel = c.attributes[found.attribute];
+        if (record && record.points > 0) {
+          const rel = pointsToRelativeLevel(record.points, found.difficulty);
+          lines.push(
+            `${c.name} (${found.attribute} ${attrLevel}): trained at ${record.points} points, ` +
+              `${found.attribute}${relSigned(rel)} = level ${attrLevel + rel}.`,
+          );
+        } else if (found.defaults.length > 0) {
+          const level = baseSkillLevel(c, found);
+          lines.push(
+            `${c.name} (${found.attribute} ${attrLevel}): untrained, default ${found.defaults[0].from}${found.defaults[0].penalty} = level ${level}.`,
+          );
+        }
+      }
+      return lines;
     }
 
     case "sheet": {
@@ -208,6 +257,55 @@ export function runCommand(state: SoloState, line: string): string[] {
       return lines;
     }
 
+    case "contest": {
+      if (!state.character) return ["No character yet. Use: new <name>"];
+      // contest <skill or attribute> [+n or -n ...] vs <opponent's effective skill>
+      const joined = args.join(" ");
+      const vs = joined.split(/\s+vs\s+/i);
+      if (vs.length !== 2) return ["Usage: contest <skill or attribute> [+n or -n ...] vs <number>"];
+      const leftTokens: string[] = [];
+      const leftMods: string[] = [];
+      for (const t of vs[0].split(/\s+/).filter(Boolean)) (/^[+-]/.test(t) ? leftMods : leftTokens).push(t);
+      const mods = parseModifiers(leftMods);
+      if (typeof mods === "string") return [mods];
+      const target = leftTokens.join(" ");
+      if (!target) return ["Usage: contest <skill or attribute> [+n or -n ...] vs <number>"];
+
+      const attr = target.toUpperCase() as AttributeId;
+      let base: number | null;
+      let label: string;
+      if (ATTRIBUTE_IDS.includes(attr)) {
+        base = state.character.attributes[attr];
+        label = attr;
+      } else {
+        const found = findSkillRef(state, target);
+        if (typeof found === "string") return [found];
+        base = baseSkillLevel(state.character, found);
+        label = displayName(found);
+      }
+      const opponent = Number(vs[1]);
+      if (!Number.isInteger(opponent)) return [`Bad opponent skill "${vs[1]}". Give their effective skill as a number.`];
+      if (base === null) return [`${label} has no default (p. 13). You cannot attempt it untrained.`];
+
+      const result = quickContest(
+        { baseSkill: base, modifiers: mods, label },
+        { baseSkill: opponent, label: "opponent" },
+        state.dice,
+      );
+      const modSum = mods.reduce((s, m) => s + m.value, 0);
+      const lines = [`${label} ${base + modSum} vs ${opponent}.`];
+      const sideLine = (who: string, r: typeof result.a): string => {
+        if (r.status !== "rolled") return `${who} cannot attempt the roll (p. 2).`;
+        const crit = r.critical === "none" ? "" : ` (${r.critical})`;
+        return `${who} rolled 3d: ${r.total} — ${r.success ? `success by ${r.margin}` : `failure by ${r.margin}`}${crit}.`;
+      };
+      lines.push(sideLine("You", result.a), sideLine("They", result.b));
+      if (result.winner === null) lines.push("Nobody won.");
+      else if (result.winner === "a") lines.push(`You win, margin of victory ${result.marginOfVictory}.`);
+      else lines.push(`They win, margin of victory ${result.marginOfVictory}.`);
+      return lines;
+    }
+
     case "seed": {
       const seed = Number(args[0]);
       if (!Number.isInteger(seed)) return ["Usage: seed <n>"];
@@ -237,6 +335,8 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
         "  sheet                 Print attributes, skills and point total.",
         "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
+        "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
+        "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",

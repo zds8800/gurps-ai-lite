@@ -17,6 +17,8 @@ export {
   resolve,
   rollFast,
 } from "./core/success-roll.ts";
+export { quickContest } from "./core/quick-contest.ts";
+export type { Contestant, ContestWinner, QuickContestResult } from "./core/quick-contest.ts";
 export { rollOdds, successChance, TOTAL_COUNTS, TOTAL_OUTCOMES } from "./core/odds.ts";
 export type { Odds } from "./core/odds.ts";
 export {
