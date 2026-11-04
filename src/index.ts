@@ -19,6 +19,25 @@ export {
 } from "./core/success-roll.ts";
 export { rollOdds, successChance, TOTAL_COUNTS, TOTAL_OUTCOMES } from "./core/odds.ts";
 export type { Odds } from "./core/odds.ts";
+export {
+  ATTRIBUTE_BASE,
+  ATTRIBUTE_DEFS,
+  attributeCost,
+  derivedTraits,
+  makeCharacter,
+  pointTotal,
+} from "./model/attribute.ts";
+export type { AttributeDef, AttributeId, Character } from "./model/attribute.ts";
+export { pointsToRelativeLevel } from "./model/skill.ts";
+export type {
+  Default,
+  Difficulty,
+  InvalidPointsMode,
+  SkillDef,
+  SkillRecord,
+} from "./model/skill.ts";
+export { baseSkillLevel, defaultLevel } from "./model/defaults.ts";
+export { findSkill, LITE_CORE, LITE_SKILLS } from "./modules/lite-core/index.ts";
 export type {
   Critical,
   LowSkillMode,
