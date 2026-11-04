@@ -1,0 +1,75 @@
+{
+  "version": 4,
+  "id": "A9e8d7c6b5a4938271605f4e3d2c1b0a",
+  "total_points": 75,
+  "profile": {
+    "name": "Edge Case",
+    "notes": "Synthetic edge-case fixture for the .gcs importer (issue #13). Uses the legacy \"type\" field style, has one container, one technique, skills outside the Lite list, an ambiguous name, an unprinted point total, fractional points, and no HT row."
+  },
+  "attributes": [
+    { "attr_id": "st", "adj": -2, "calc": { "value": 8, "points": -20 } },
+    { "attr_id": "dx", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "iq", "adj": 1, "calc": { "value": 11, "points": 20 } }
+  ],
+  "skills": [
+    {
+      "type": "skill_container",
+      "name": "Combat Skills",
+      "open": true,
+      "children": [
+        {
+          "type": "skill",
+          "name": "Broadsword",
+          "difficulty": "dx/a",
+          "points": 4,
+          "reference": "L15",
+          "calc": { "level": 11, "relative_level": "DX+1", "points": 4 }
+        }
+      ]
+    },
+    {
+      "type": "technique",
+      "name": "Kicking",
+      "difficulty": "h",
+      "points": 2,
+      "default": { "type": "skill", "name": "Brawling", "modifier": -2 }
+    },
+    {
+      "type": "skill",
+      "name": "Computer Hacking",
+      "difficulty": "iq/vh",
+      "points": 4
+    },
+    {
+      "type": "skill",
+      "name": "Skiing",
+      "difficulty": "dx/h",
+      "points": 2
+    },
+    {
+      "type": "skill",
+      "name": "Knife",
+      "difficulty": "dx/e",
+      "points": 1
+    },
+    {
+      "type": "skill",
+      "name": "Stealth",
+      "difficulty": "dx/a",
+      "points": 3
+    },
+    {
+      "type": "skill",
+      "name": "Acting",
+      "difficulty": "iq/a",
+      "points": 0.5
+    },
+    {
+      "type": "skill",
+      "name": "Shadowing",
+      "difficulty": "iq/a",
+      "points": 2,
+      "reference": "L16"
+    }
+  ]
+}

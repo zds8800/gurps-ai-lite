@@ -39,6 +39,8 @@ export type {
   SkillRecord,
 } from "./model/skill.ts";
 export { baseSkillLevel, defaultLevel } from "./model/defaults.ts";
+export { importGcsSheet } from "./model/gcs.ts";
+export type { GcsImport } from "./model/gcs.ts";
 export { Registry } from "./modules/loader.ts";
 export type { RulesModule } from "./modules/loader.ts";
 export { findSkill, LITE_CORE, LITE_SKILLS } from "./modules/lite-core/index.ts";
