@@ -1,0 +1,29 @@
+/** Public exports for the success-roll slice. */
+
+export { SeededDice, ScriptedDice, SystemDice } from "./core/dice.ts";
+export type { DiceSource } from "./core/dice.ts";
+export {
+  OUTCOME,
+  OUTCOME_CRITICAL_FAILURE,
+  OUTCOME_CRITICAL_SUCCESS,
+  OUTCOME_SUCCESS,
+  outcomeBits,
+} from "./core/outcome-table.ts";
+export {
+  PACK_CRITICAL_FAILURE,
+  PACK_CRITICAL_SUCCESS,
+  PACK_SUCCESS,
+  packTotal,
+  resolve,
+  rollFast,
+} from "./core/success-roll.ts";
+export { rollOdds, successChance, TOTAL_COUNTS, TOTAL_OUTCOMES } from "./core/odds.ts";
+export type { Odds } from "./core/odds.ts";
+export type {
+  Critical,
+  LowSkillMode,
+  Modifier,
+  RollRequest,
+  RollResult,
+  RollStatus,
+} from "./core/types.ts";
