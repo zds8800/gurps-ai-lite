@@ -72,6 +72,23 @@ test("bad input gets a plain message, not a crash", () => {
   assert.deepEqual(out[5], 'Unknown command "frobnicate". Type help.');
 });
 
+test("contest command runs a Quick Contest against a target number", () => {
+  const out = session(["seed 5", "new M", "learn stealth 4", "contest stealth vs 10"]);
+  assert.ok(out.some((l) => l.startsWith("Stealth 11 vs 10.")));
+  assert.ok(out.some((l) => l.startsWith("You rolled 3d: ")));
+  assert.ok(out.some((l) => l.startsWith("They rolled 3d: ")));
+  assert.ok(
+    out.some((l) => /^(You win|They win|Nobody won)/.test(l)),
+    "a contest verdict line",
+  );
+});
+
+test("contest usage errors are plain", () => {
+  const out = session(["new M", "contest stealth", "contest stealth vs abc"]);
+  assert.deepEqual(out[1], "Usage: contest <skill or attribute> [+n or -n ...] vs <number>");
+  assert.deepEqual(out[2], 'Bad opponent skill "abc". Give their effective skill as a number.');
+});
+
 test("the CLI runs as a process with piped commands", () => {
   const soloPath = fileURLToPath(new URL("../src/cli/solo.ts", import.meta.url));
   const output = execFileSync(

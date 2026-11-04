@@ -19,6 +19,7 @@ import { Registry } from "../modules/loader.ts";
 import { LITE_CORE } from "../modules/lite-core/index.ts";
 import { rollOdds } from "../core/odds.ts";
 import { resolve } from "../core/success-roll.ts";
+import { quickContest } from "../core/quick-contest.ts";
 import { SeededDice, SystemDice } from "../core/dice.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
@@ -208,6 +209,55 @@ export function runCommand(state: SoloState, line: string): string[] {
       return lines;
     }
 
+    case "contest": {
+      if (!state.character) return ["No character yet. Use: new <name>"];
+      // contest <skill or attribute> [+n or -n ...] vs <opponent's effective skill>
+      const joined = args.join(" ");
+      const vs = joined.split(/\s+vs\s+/i);
+      if (vs.length !== 2) return ["Usage: contest <skill or attribute> [+n or -n ...] vs <number>"];
+      const leftTokens: string[] = [];
+      const leftMods: string[] = [];
+      for (const t of vs[0].split(/\s+/).filter(Boolean)) (/^[+-]/.test(t) ? leftMods : leftTokens).push(t);
+      const mods = parseModifiers(leftMods);
+      if (typeof mods === "string") return [mods];
+      const target = leftTokens.join(" ");
+      if (!target) return ["Usage: contest <skill or attribute> [+n or -n ...] vs <number>"];
+
+      const attr = target.toUpperCase() as AttributeId;
+      let base: number | null;
+      let label: string;
+      if (ATTRIBUTE_IDS.includes(attr)) {
+        base = state.character.attributes[attr];
+        label = attr;
+      } else {
+        const found = findSkillRef(state, target);
+        if (typeof found === "string") return [found];
+        base = baseSkillLevel(state.character, found);
+        label = displayName(found);
+      }
+      const opponent = Number(vs[1]);
+      if (!Number.isInteger(opponent)) return [`Bad opponent skill "${vs[1]}". Give their effective skill as a number.`];
+      if (base === null) return [`${label} has no default (p. 13). You cannot attempt it untrained.`];
+
+      const result = quickContest(
+        { baseSkill: base, modifiers: mods, label },
+        { baseSkill: opponent, label: "opponent" },
+        state.dice,
+      );
+      const modSum = mods.reduce((s, m) => s + m.value, 0);
+      const lines = [`${label} ${base + modSum} vs ${opponent}.`];
+      const sideLine = (who: string, r: typeof result.a): string => {
+        if (r.status !== "rolled") return `${who} cannot attempt the roll (p. 2).`;
+        const crit = r.critical === "none" ? "" : ` (${r.critical})`;
+        return `${who} rolled 3d: ${r.total} — ${r.success ? `success by ${r.margin}` : `failure by ${r.margin}`}${crit}.`;
+      };
+      lines.push(sideLine("You", result.a), sideLine("They", result.b));
+      if (result.winner === null) lines.push("Nobody won.");
+      else if (result.winner === "a") lines.push(`You win, margin of victory ${result.marginOfVictory}.`);
+      else lines.push(`They win, margin of victory ${result.marginOfVictory}.`);
+      return lines;
+    }
+
     case "seed": {
       const seed = Number(args[0]);
       if (!Number.isInteger(seed)) return ["Usage: seed <n>"];
@@ -237,6 +287,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
         "  sheet                 Print attributes, skills and point total.",
         "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
+        "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
