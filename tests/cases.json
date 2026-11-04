@@ -1,0 +1,857 @@
+[
+ {
+  "id": "T001",
+  "effectiveSkill": 12,
+  "roll": 12,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T002",
+  "effectiveSkill": 12,
+  "roll": 13,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T003",
+  "effectiveSkill": 18,
+  "roll": 12,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 6
+ },
+ {
+  "id": "T004",
+  "effectiveSkill": 9,
+  "roll": 12,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 3
+ },
+ {
+  "id": "T005",
+  "effectiveSkill": 4,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 0
+ },
+ {
+  "id": "T006",
+  "effectiveSkill": 4,
+  "roll": 5,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T007",
+  "effectiveSkill": 19,
+  "roll": 16,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 3
+ },
+ {
+  "id": "T008",
+  "effectiveSkill": 19,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": -2
+ },
+ {
+  "id": "T009",
+  "effectiveSkill": 19,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": -1
+ },
+ {
+  "id": "T010",
+  "effectiveSkill": 14,
+  "roll": 14,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T011",
+  "effectiveSkill": 14,
+  "roll": 15,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T012",
+  "effectiveSkill": 6,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T013",
+  "effectiveSkill": 5,
+  "roll": 15,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T014",
+  "effectiveSkill": 17,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T015",
+  "effectiveSkill": 17,
+  "roll": 16,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T016",
+  "effectiveSkill": 10,
+  "roll": 3,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 7
+ },
+ {
+  "id": "T017",
+  "effectiveSkill": 10,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 6
+ },
+ {
+  "id": "T018",
+  "effectiveSkill": 10,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 7
+ },
+ {
+  "id": "T019",
+  "effectiveSkill": 10,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 8
+ },
+ {
+  "id": "T020",
+  "effectiveSkill": 3,
+  "roll": 3,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 0
+ },
+ {
+  "id": "T021",
+  "effectiveSkill": 3,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": -1
+ },
+ {
+  "id": "T022",
+  "effectiveSkill": 3,
+  "roll": 5,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 2
+ },
+ {
+  "id": "T023",
+  "effectiveSkill": 20,
+  "roll": 3,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 17
+ },
+ {
+  "id": "T024",
+  "effectiveSkill": 20,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 16
+ },
+ {
+  "id": "T025",
+  "effectiveSkill": 20,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": -3
+ },
+ {
+  "id": "T026",
+  "effectiveSkill": 20,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": -2
+ },
+ {
+  "id": "T027",
+  "effectiveSkill": 16,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T028",
+  "effectiveSkill": 15,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 2
+ },
+ {
+  "id": "T029",
+  "effectiveSkill": 14,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 3
+ },
+ {
+  "id": "T030",
+  "effectiveSkill": 3,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 14
+ },
+ {
+  "id": "T031",
+  "effectiveSkill": 4,
+  "roll": 7,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 3
+ },
+ {
+  "id": "T032",
+  "effectiveSkill": 14,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T033",
+  "effectiveSkill": 15,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 10
+ },
+ {
+  "id": "T034",
+  "effectiveSkill": 14,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 8
+ },
+ {
+  "id": "T035",
+  "effectiveSkill": 15,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T036",
+  "effectiveSkill": 16,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 10
+ },
+ {
+  "id": "T037",
+  "effectiveSkill": 16,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 11
+ },
+ {
+  "id": "T038",
+  "effectiveSkill": 16,
+  "roll": 7,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T039",
+  "effectiveSkill": 25,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 19
+ },
+ {
+  "id": "T040",
+  "effectiveSkill": 25,
+  "roll": 7,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 18
+ },
+ {
+  "id": "T041",
+  "effectiveSkill": 25,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": -7
+ },
+ {
+  "id": "T042",
+  "effectiveSkill": 25,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": -8
+ },
+ {
+  "id": "T043",
+  "effectiveSkill": 15,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 3
+ },
+ {
+  "id": "T044",
+  "effectiveSkill": 18,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 13
+ },
+ {
+  "id": "T045",
+  "effectiveSkill": 18,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 12
+ },
+ {
+  "id": "T046",
+  "effectiveSkill": 16,
+  "roll": 16,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T047",
+  "effectiveSkill": 16,
+  "roll": 15,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T048",
+  "effectiveSkill": 3,
+  "roll": 13,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T049",
+  "effectiveSkill": 3,
+  "roll": 12,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T050",
+  "effectiveSkill": 3,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 13
+ },
+ {
+  "id": "T051",
+  "effectiveSkill": 4,
+  "roll": 14,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T052",
+  "effectiveSkill": 4,
+  "roll": 13,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T053",
+  "effectiveSkill": 5,
+  "roll": 14,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T054",
+  "effectiveSkill": 5,
+  "roll": 15,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T055",
+  "effectiveSkill": 6,
+  "roll": 15,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T056",
+  "effectiveSkill": 6,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T057",
+  "effectiveSkill": 7,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 9
+ },
+ {
+  "id": "T058",
+  "effectiveSkill": 7,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T059",
+  "effectiveSkill": 8,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 10
+ },
+ {
+  "id": "T060",
+  "effectiveSkill": 3,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 15
+ },
+ {
+  "id": "T061",
+  "effectiveSkill": 10,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 6
+ },
+ {
+  "id": "T062",
+  "effectiveSkill": 10,
+  "roll": 10,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T063",
+  "effectiveSkill": 3,
+  "roll": 3,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 0
+ },
+ {
+  "id": "T064",
+  "effectiveSkill": 3,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": -1
+ },
+ {
+  "id": "T065",
+  "effectiveSkill": 2,
+  "roll": 3,
+  "attempt": false
+ },
+ {
+  "id": "T066",
+  "effectiveSkill": 0,
+  "roll": 4,
+  "attempt": false
+ },
+ {
+  "id": "T067",
+  "effectiveSkill": -6,
+  "roll": 3,
+  "attempt": false
+ },
+ {
+  "id": "T068",
+  "effectiveSkill": 29,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 23
+ },
+ {
+  "id": "T069",
+  "effectiveSkill": 29,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": -12
+ },
+ {
+  "id": "T070",
+  "effectiveSkill": 29,
+  "roll": 18,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": -11
+ },
+ {
+  "id": "T071",
+  "effectiveSkill": 9,
+  "roll": 9,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T072",
+  "effectiveSkill": 8,
+  "roll": 8,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T073",
+  "effectiveSkill": 15,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 10
+ },
+ {
+  "id": "T074",
+  "effectiveSkill": 12,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 7
+ },
+ {
+  "id": "T075",
+  "effectiveSkill": 14,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 8
+ },
+ {
+  "id": "T076",
+  "effectiveSkill": 15,
+  "roll": 17,
+  "attempt": true,
+  "success": false,
+  "critical": "critical failure",
+  "margin": 2
+ },
+ {
+  "id": "T077",
+  "effectiveSkill": 7,
+  "roll": 7,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T078",
+  "effectiveSkill": 7,
+  "roll": 8,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T079",
+  "effectiveSkill": 6,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T080",
+  "effectiveSkill": 6,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T081",
+  "effectiveSkill": 4,
+  "roll": 4,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 0
+ },
+ {
+  "id": "T082",
+  "effectiveSkill": 2,
+  "roll": 3,
+  "attempt": false
+ },
+ {
+  "id": "T083",
+  "effectiveSkill": 15,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 10
+ },
+ {
+  "id": "T084",
+  "effectiveSkill": 2,
+  "roll": 3,
+  "attempt": false
+ },
+ {
+  "id": "T085",
+  "effectiveSkill": 3,
+  "roll": 3,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 0
+ },
+ {
+  "id": "T086",
+  "effectiveSkill": 15,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "critical success",
+  "margin": 10
+ },
+ {
+  "id": "T087",
+  "effectiveSkill": 15,
+  "roll": 16,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T088",
+  "effectiveSkill": 7,
+  "roll": 7,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T089",
+  "effectiveSkill": 8,
+  "roll": 9,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T090",
+  "effectiveSkill": 6,
+  "roll": 6,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T091",
+  "effectiveSkill": 7,
+  "roll": 7,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T092",
+  "effectiveSkill": 7,
+  "roll": 8,
+  "attempt": true,
+  "success": false,
+  "critical": "none",
+  "margin": 1
+ },
+ {
+  "id": "T093",
+  "effectiveSkill": 5,
+  "roll": 5,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T094",
+  "effectiveSkill": 12,
+  "roll": 12,
+  "attempt": true,
+  "success": true,
+  "critical": "none",
+  "margin": 0
+ },
+ {
+  "id": "T095",
+  "effectiveSkill": null,
+  "roll": null,
+  "attempt": false
+ },
+ {
+  "id": "T096",
+  "effectiveSkill": null,
+  "roll": null,
+  "attempt": false
+ },
+ {
+  "id": "T097",
+  "effectiveSkill": null,
+  "roll": null,
+  "attempt": false
+ },
+ {
+  "id": "T098",
+  "effectiveSkill": null,
+  "roll": null,
+  "attempt": false
+ }
+]
