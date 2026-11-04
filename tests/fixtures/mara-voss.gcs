@@ -1,0 +1,81 @@
+{
+  "version": 4,
+  "id": "A3f9c1d2e4b54a1f8c2d7e9f0a1b2c3d4",
+  "total_points": 100,
+  "profile": {
+    "name": "Mara Voss",
+    "player_name": "gurps-ai-lite test fixture",
+    "notes": "Original test character for the .gcs importer (issue #13). Not a real person. Written by hand in the GCS 5 file format."
+  },
+  "attributes": [
+    { "attr_id": "st", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "dx", "adj": 1, "calc": { "value": 11, "points": 20 } },
+    { "attr_id": "iq", "adj": 2, "calc": { "value": 12, "points": 40 } },
+    { "attr_id": "ht", "adj": 1, "calc": { "value": 11, "points": 10 } },
+    { "attr_id": "hp", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "will", "adj": 0, "calc": { "value": 12, "points": 0 } },
+    { "attr_id": "per", "adj": 0, "calc": { "value": 12, "points": 0 } },
+    { "attr_id": "fp", "adj": 0, "calc": { "value": 11, "points": 0 } }
+  ],
+  "skills": [
+    {
+      "id": "sK1xYz000000000000000001",
+      "name": "Stealth",
+      "difficulty": "dx/a",
+      "points": 4,
+      "reference": "L17",
+      "calc": { "level": 12, "relative_level": "DX+1", "points": 4 }
+    },
+    {
+      "id": "sK1xYz000000000000000002",
+      "name": "Lockpicking",
+      "tech_level": "8",
+      "difficulty": "iq/a",
+      "points": 2,
+      "reference": "L15",
+      "calc": { "level": 12, "relative_level": "IQ+0", "points": 2 }
+    },
+    {
+      "id": "sK1xYz000000000000000003",
+      "name": "Brawling",
+      "difficulty": "dx/e",
+      "points": 1,
+      "reference": "L14",
+      "calc": { "level": 11, "relative_level": "DX+0", "points": 1 }
+    },
+    {
+      "id": "sK1xYz000000000000000004",
+      "name": "Thrown Weapon",
+      "specialization": "Knife",
+      "difficulty": "dx/e",
+      "points": 2,
+      "reference": "L17",
+      "calc": { "level": 12, "relative_level": "DX+1", "points": 2 }
+    },
+    {
+      "id": "sK1xYz000000000000000005",
+      "name": "Fast-Talk",
+      "difficulty": "iq/a",
+      "points": 1,
+      "reference": "L15",
+      "calc": { "level": 11, "relative_level": "IQ-1", "points": 1 }
+    },
+    {
+      "id": "sK1xYz000000000000000006",
+      "name": "Interrogation",
+      "difficulty": "iq/a",
+      "points": 8,
+      "reference": "L15",
+      "calc": { "level": 14, "relative_level": "IQ+2", "points": 8 }
+    },
+    {
+      "id": "sK1xYz000000000000000007",
+      "name": "Area Knowledge",
+      "specialization": "Docks District",
+      "difficulty": "iq/e",
+      "points": 1,
+      "reference": "L14",
+      "calc": { "level": 12, "relative_level": "IQ+0", "points": 1 }
+    }
+  ]
+}

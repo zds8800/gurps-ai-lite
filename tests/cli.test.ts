@@ -119,6 +119,28 @@ test("formula on an attribute gets a plain note", () => {
   assert.deepEqual(out[0], "ST is a basic attribute: its level is just its score (p. 4). Skills based on it add a relative level.");
 });
 
+test("load reads a .gcs sheet into the session", () => {
+  const out = session(["load tests/fixtures/mara-voss.gcs", "test stealth", "sheet"]);
+  assert.deepEqual(
+    out[0],
+    "Mara Voss loaded from file. ST 10 DX 11 IQ 12 HT 11. 7 skills, 89 points.",
+  );
+  assert.ok(out.some((l) => l.startsWith("Stealth 12"))); // imported level is used
+});
+
+test("load reports a missing file plainly", () => {
+  const out = session(["load tests/fixtures/nobody.gcs"]);
+  assert.deepEqual(out[0], 'Cannot load "tests/fixtures/nobody.gcs" — unreadable or not JSON. GCS 5 sheets are JSON; re-save GCS 4 XML files in GCS 5 first.');
+});
+
+test("an imported sheet with unprinted point totals explains instead of crashing", () => {
+  const out = session(["load tests/fixtures/edge-case.gcs", "sheet", "test stealth"]);
+  const sheetLine = out.find((l) => l.startsWith("  Stealth (DX/A) 3 points:"));
+  assert.ok(sheetLine?.includes("3 points is not a purchasable cost"), sheetLine);
+  const testLine = out.at(-1)!;
+  assert.ok(testLine.startsWith("3 points is not a purchasable cost"), testLine);
+});
+
 test("the CLI runs as a process with piped commands", () => {
   const soloPath = fileURLToPath(new URL("../src/cli/solo.ts", import.meta.url));
   const output = execFileSync(

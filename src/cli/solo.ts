@@ -9,10 +9,12 @@
  */
 
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { makeCharacter, pointTotal } from "../model/attribute.ts";
 import type { AttributeId, Character } from "../model/attribute.ts";
 import { baseSkillLevel } from "../model/defaults.ts";
+import { importGcsSheet } from "../model/gcs.ts";
 import { pointsToRelativeLevel } from "../model/skill.ts";
 import type { SkillDef } from "../model/skill.ts";
 import { Registry } from "../modules/loader.ts";
@@ -92,6 +94,30 @@ export function runCommand(state: SoloState, line: string): string[] {
       return [`${name} created. ST ${a.ST} DX ${a.DX} IQ ${a.IQ} HT ${a.HT}. 0 points spent.`];
     }
 
+    case "load": {
+      const file = args.join(" ").trim();
+      if (!file) return ["Usage: load <path to .gcs file>"];
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(file, "utf-8"));
+      } catch {
+        return [`Cannot load "${file}" — unreadable or not JSON. GCS 5 sheets are JSON; re-save GCS 4 XML files in GCS 5 first.`];
+      }
+      try {
+        const result = importGcsSheet(parsed, state.registry);
+        state.character = result.character;
+        const c = result.character;
+        const lines = [
+          `${c.name} loaded from file. ST ${c.attributes.ST} DX ${c.attributes.DX} IQ ${c.attributes.IQ} HT ${c.attributes.HT}. ` +
+            `${c.skills.length} skills, ${pointTotal(c)} points.`,
+        ];
+        lines.push(...result.notes.map((note) => `Note: ${note}`));
+        return lines;
+      } catch (error) {
+        return [(error as Error).message];
+      }
+    }
+
     case "set": {
       if (!state.character) return ["No character yet. Use: new <name>"];
       const [attrRaw, valueRaw] = args;
@@ -157,11 +183,15 @@ export function runCommand(state: SoloState, line: string): string[] {
         const record = c.skills.find((r) => r.skillId === found.id);
         const attrLevel = c.attributes[found.attribute];
         if (record && record.points > 0) {
-          const rel = pointsToRelativeLevel(record.points, found.difficulty);
-          lines.push(
-            `${c.name} (${found.attribute} ${attrLevel}): trained at ${record.points} points, ` +
-              `${found.attribute}${relSigned(rel)} = level ${attrLevel + rel}.`,
-          );
+          try {
+            const rel = pointsToRelativeLevel(record.points, found.difficulty);
+            lines.push(
+              `${c.name} (${found.attribute} ${attrLevel}): trained at ${record.points} points, ` +
+                `${found.attribute}${relSigned(rel)} = level ${attrLevel + rel}.`,
+            );
+          } catch (error) {
+            lines.push(`${c.name}: ${(error as Error).message}`);
+          }
         } else if (found.defaults.length > 0) {
           const level = baseSkillLevel(c, found);
           lines.push(
@@ -185,8 +215,13 @@ export function runCommand(state: SoloState, line: string): string[] {
         for (const record of c.skills) {
           const def = state.registry.skill(record.skillId);
           if (!def) continue;
-          const level = baseSkillLevel(c, def);
-          lines.push(`  ${displayName(def)} (${def.attribute}/${def.difficulty}) ${record.points} points: level ${level}.`);
+          let levelText: string;
+          try {
+            levelText = `level ${baseSkillLevel(c, def)}`;
+          } catch (error) {
+            levelText = (error as Error).message;
+          }
+          lines.push(`  ${displayName(def)} (${def.attribute}/${def.difficulty}) ${record.points} points: ${levelText}`);
         }
       }
       lines.push(`Point total: ${pointTotal(c)}.`);
@@ -216,7 +251,11 @@ export function runCommand(state: SoloState, line: string): string[] {
       } else {
         const found = findSkillRef(state, target);
         if (typeof found === "string") return [found];
-        base = baseSkillLevel(state.character, found);
+        try {
+          base = baseSkillLevel(state.character, found);
+        } catch (error) {
+          return [(error as Error).message];
+        }
         label = displayName(found);
       }
 
@@ -280,7 +319,11 @@ export function runCommand(state: SoloState, line: string): string[] {
       } else {
         const found = findSkillRef(state, target);
         if (typeof found === "string") return [found];
-        base = baseSkillLevel(state.character, found);
+        try {
+          base = baseSkillLevel(state.character, found);
+        } catch (error) {
+          return [(error as Error).message];
+        }
         label = displayName(found);
       }
       const opponent = Number(vs[1]);
@@ -331,6 +374,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       return [
         "Commands:",
         "  new <name>            Start a character at 10 in everything.",
+        "  load <path>           Load a character from a .gcs file (GCS 5).",
         "  set <ST/DX/IQ/HT> <n> Set a basic attribute.",
         "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
         "  sheet                 Print attributes, skills and point total.",
