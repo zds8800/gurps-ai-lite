@@ -62,6 +62,7 @@ export function makeCombatant(character: Character): Combatant {
 export type Maneuver =
   | { kind: "do-nothing" }
   | { kind: "attack" }
+  | { kind: "aim" }
   | { kind: "all-out-attack"; option: "determined" | "double" | "strong"; ranged?: boolean }
   | { kind: "all-out-defense"; option: "increased"; defense: "dodge" | "block" | "parry" }
   | { kind: "all-out-defense"; option: "double" }
@@ -72,6 +73,7 @@ export function maneuverName(m: Maneuver): string {
   switch (m.kind) {
     case "do-nothing": return "do nothing";
     case "attack": return "attack";
+    case "aim": return "aim";
     case "move-and-attack": return "move and attack";
     case "all-out-attack":
       // Ranged All-Out Attack has no options: a flat +1 (p. 27).

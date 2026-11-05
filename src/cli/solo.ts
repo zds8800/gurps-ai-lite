@@ -48,6 +48,12 @@ type DefensePolicy = DefenseChoice | "best";
 interface Fighter {
   combatant: Combatant;
   policy: DefensePolicy;
+  /**
+   * Aim in progress (pp. 25-26): the target, the weapon's Accuracy, seconds
+   * spent, and bracing. Spent by the next Attack or All-Out Attack; the
+   * bonus applies only against the aimed target.
+   */
+  aim?: { target: Combatant; acc: number; seconds: number; braced: boolean };
 }
 
 export interface SoloState {
@@ -150,7 +156,7 @@ function matchFighter(
 function soleNpc(state: SoloState): Fighter | string {
   if (!state.combat) return "No fight yet. Load yourself (new/load) and a foe: foe <file>.";
   if (state.combat.npcs.length !== 1)
-    return "Several fighters are in play — name one: npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> ...";
+    return "Several fighters are in play — name one: npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> ...";
   return state.combat.npcs[0];
 }
 
@@ -270,6 +276,68 @@ function doNothingTurn(state: SoloState, fighter: Fighter): string[] {
   // per the p. 29 exception.
   takeTurn(fighter.combatant, { kind: "do-nothing" });
   return [`${fighter.combatant.character.name} does nothing this turn.`];
+}
+
+/** The bonus a spent aim is worth (p. 27 table): Acc, +1 at 2 seconds, +2 at 3+, +1 braced. */
+function aimBonus(aim: { acc: number; seconds: number; braced: boolean }): number {
+  return aim.acc + (aim.seconds >= 3 ? 2 : aim.seconds >= 2 ? 1 : 0) + (aim.braced ? 1 : 0);
+}
+
+/**
+ * The Aim maneuver (pp. 25-26): aim [<target>] acc <n> [braced]. Aiming again
+ * at the same target with the same weapon adds a second of aim (extra aim:
+ * +1 at 2 seconds, +2 at 3+). The bonus applies to the next ranged Attack or
+ * All-Out Attack against that target.
+ */
+function aimTurn(state: SoloState, fighter: Fighter, args: string[]): string[] {
+  const combat = state.combat!;
+  const name = fighter.combatant.character.name;
+  const gates = actionGates(state, fighter.combatant);
+  if (gates) return gates;
+  const all = allFighters(combat);
+  const m = matchFighter(all, args, fighter);
+  if (typeof m === "string") return [m];
+  let target: Fighter;
+  let rest: string[];
+  if (m) {
+    target = m.fighter;
+    rest = m.rest;
+  } else if (fighter === combat.you && combat.npcs.length === 1) {
+    target = combat.npcs[0];
+    rest = args;
+  } else if (fighter !== combat.you) {
+    target = combat.you;
+    rest = args;
+  } else {
+    return [`Aim at whom? Name the target — fighters: ${combat.npcs.map((f) => f.combatant.character.name).join(", ")}.`];
+  }
+  let acc: number | null = null;
+  let braced = false;
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i].toLowerCase();
+    if (t === "acc") {
+      acc = Number(rest[i + 1]);
+      if (!Number.isInteger(acc) || acc < 1)
+        return [`Bad Acc "${rest[i + 1] ?? ""}". Accuracy is a whole number, 1 or more.`];
+      i += 1;
+    } else if (t === "braced") {
+      braced = true;
+    } else {
+      return ["Usage: aim [<target>] acc <n> [braced]  (Aim, pp. 25-26)"];
+    }
+  }
+  if (acc === null) return ["Usage: aim [<target>] acc <n> [braced]  (Aim, pp. 25-26)"];
+  const prev = fighter.aim;
+  const continuing = prev !== undefined && prev.target === target.combatant && prev.acc === acc;
+  const seconds = continuing ? prev.seconds + 1 : 1;
+  fighter.aim = { target: target.combatant, acc, seconds, braced: braced || (continuing && prev.braced) };
+  takeTurn(fighter.combatant, { kind: "aim" });
+  const extraText = seconds === 1 ? "" : `, ${seconds} seconds of aim`;
+  const bracedText = fighter.aim.braced ? ", braced" : "";
+  return [
+    `${name} aims at ${target.combatant.character.name} (Acc ${acc}${extraText}${bracedText}): ` +
+      `+${aimBonus(fighter.aim)} on their next ranged attack against them (pp. 25-27).`,
+  ];
 }
 
 /** How an attack command's maneuver shapes the exchange (p. 25). */
@@ -465,6 +533,23 @@ function runExchange(
   if (stats) {
     maneuverMods.push({ label: `range ${stats.range} yd`, value: rangeModifier(stats.range) });
   }
+  // Aim (pp. 25-27): a ranged Attack or All-Out Attack against the aimed
+  // target gets Acc plus extra-aim and braced bonuses. Any attack spends the
+  // aim; Move and Attack is not one of the maneuvers that benefits (p. 25).
+  let aimToSpend: Fighter | null = null;
+  if (state.combat) {
+    const af = allFighters(state.combat).find((f) => f.combatant === attacker);
+    if (af?.aim) {
+      aimToSpend = af;
+      if (opts.ranged && rangedManeuver !== "moveattack" && af.aim.target === defender) {
+        const a = af.aim;
+        const parts = [`Acc ${a.acc}`];
+        if (a.seconds >= 2) parts.push(`extra aim +${a.seconds >= 3 ? 2 : 1}`);
+        if (a.braced) parts.push("braced +1");
+        maneuverMods.push({ label: `aim (${parts.join(", ")})`, value: aimBonus(a) });
+      }
+    }
+  }
   const modSum = maneuverMods.reduce((s, m) => s + m.value, 0);
   if (capMelee9) {
     // "Your adjusted skill cannot exceed 9." Shock (engine-side) also counts,
@@ -481,8 +566,10 @@ function runExchange(
   }
 
   // The turn is taken now that the exchange is real: maneuver set, the
-  // once-per-turn Block and Parry counts reset (pp. 25, 28).
+  // once-per-turn Block and Parry counts reset (pp. 25, 28). Attacking
+  // spends any aim in progress (pp. 25-26).
   takeTurn(attacker, maneuver);
+  if (aimToSpend) aimToSpend.aim = undefined;
 
   const runOnce = () =>
     attackExchange(
@@ -1047,9 +1134,10 @@ export function runCommand(state: SoloState, line: string): string[] {
         return runExchange(state, actor.combatant, target.combatant, restArgs, target.policy, opts);
       }
       if (verb === "defend") return setDefensePolicy(state, actor, (rest[0] ?? "").toLowerCase(), "npc <name> defend");
+      if (verb === "aim") return aimTurn(state, actor, rest);
       if (verb === "alloutdefense") return takeAllOutDefense(state, actor, rest, "npc <name> alloutdefense");
       if (verb === "donothing") return doNothingTurn(state, actor);
-      return [`Usage: npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> ...`];
+      return [`Usage: npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> ...`];
     }
 
     case "alloutdefense": {
@@ -1061,6 +1149,11 @@ export function runCommand(state: SoloState, line: string): string[] {
       const npc = soleNpc(state);
       if (typeof npc === "string") return [npc];
       return takeAllOutDefense(state, npc, args, "foealloutdefense");
+    }
+
+    case "aim": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      return aimTurn(state, state.combat.you, args);
     }
 
     case "donothing": {
@@ -1103,12 +1196,13 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  next                  Advance to the next fighter's turn (p. 24).",
         "  attack [<target>] <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack; name a target only with several foes.",
         "  shoot [<target>] <skill> dmg <pool> <type> rng <yd> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  Ranged attack (pp. 27-28).",
+        "  aim [<target>] acc <n> [braced]  Aim: +Acc on your next shot at that target, +1/+2 for extra seconds, +1 braced (pp. 25-27).",
         "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
         "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
         "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
         "  donothing             Do Nothing this turn (p. 25).",
         "  defend <dodge|block|parry|none|best>  Set your standing defense.",
-        "  npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
+        "  npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
         "  foeattack / foeshoot / foedefend / ...  Shorthand for the one opponent; with several, use npc.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
