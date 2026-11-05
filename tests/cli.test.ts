@@ -188,6 +188,15 @@ test("the foe can attack and your chosen defense is used", () => {
   assert.ok(out.some((l) => l === "Defenses: Mara Voss parry, Edge Case dodge."));
 });
 
+test("fight starts the demo combat in one word, and restarts it fresh", () => {
+  const out = session(["seed 7", "fight", "attack brawling", "fight", "order"]);
+  assert.ok(out.some((l) => l === "Demo fight: Mara Voss vs Edge Case."));
+  assert.ok(out.some((l) => /^Mara Voss attacks with Brawling/.test(l)));
+  // The second "fight" resets both sides to full HP and default defenses.
+  assert.ok(out.some((l) => l === "HP: Mara Voss 10, Edge Case 8."));
+  assert.ok(out.some((l) => l === "Defenses: Mara Voss best, Edge Case best."));
+});
+
 test("a chosen defense that does not exist is refused, not silently swapped", () => {
   const out = session([
     "load tests/fixtures/bookish.gcs", // no trained combat skill
