@@ -245,8 +245,52 @@ test("a failed death check kills; the dead cannot act", () => {
   assert.ok(out.some((l) => l === "Edge Case is dead."));
 });
 
-test("an imported sheet with unprinted point totals explains instead of crashing", () => {
-  const out = session(["load tests/fixtures/edge-case.gcs", "sheet", "test stealth"]);
+test("maneuver commands set the stance and its modifiers (p. 25)", () => {
+  const out = session([
+    "seed 7",
+    "fight",
+    "allout determined brawling", // +4 to hit
+    "allout double brawling", // two attacks
+    "alloutdefense increased dodge",
+    "moveattack brawling", // -4
+    "order",
+  ]);
+  assert.ok(out.some((l) => /^Mara Voss attacks with Brawling \(1d-3 cr\) \(effective 15\)/.test(l)));
+  assert.ok(out.some((l) => l === "Second attack (All-Out Attack: double, p. 25):"));
+  assert.ok(
+    out.some((l) => l === "Mara Voss takes All-Out Defense: +2 to dodge (dodge 10) until their next turn (p. 25)."),
+  );
+  assert.ok(out.some((l) => /^Mara Voss attacks with Brawling \(1d-3 cr\) \(effective 7\)/.test(l)));
+  assert.ok(out.some((l) => l === "Maneuvers: Mara Voss move and attack, Edge Case do nothing."));
+});
+
+test("Move and Attack caps adjusted melee skill at 9 (p. 25)", () => {
+  const out = session([
+    "seed 11",
+    "load tests/fixtures/mara-voss.gcs",
+    "learn brawling 8", // Brawling DX/E at 8 points: DX+3 = 14
+    "foe tests/fixtures/edge-case.gcs",
+    "moveattack brawling",
+  ]);
+  // 14 - 4 = 10 would exceed the cap, so the roll is at 9.
+  assert.ok(out.some((l) => /^Mara Voss attacks with Brawling \(1d-3 cr\) \(effective 9\)/.test(l)));
+});
+
+test("a spent parry falls back to a legal defense with the reason said aloud (p. 28)", () => {
+  const out = session([
+    "seed 4",
+    "fight",
+    "defend parry",
+    "foeattack broadsword dmg 1d+1 cut", // Mara parries
+    "foeattack broadsword dmg 1d+1 cut", // parry spent; also Mara is stunned
+  ]);
+  assert.ok(
+    out.some((l) => l === "Mara Voss cannot parry — already parried this turn (pp. 28-29) — and dodges instead."),
+  );
+  assert.ok(out.some((l) => /^Mara Voss defends: dodge 8 \(-4: stunned\)/.test(l)));
+});
+
+test("an imported sheet with unprinted point totals explains instead of crashing", () => {  const out = session(["load tests/fixtures/edge-case.gcs", "sheet", "test stealth"]);
   const sheetLine = out.find((l) => l.startsWith("  Stealth (DX/A) 3 points:"));
   assert.ok(sheetLine?.includes("3 points is not a purchasable cost"), sheetLine);
   const testLine = out.at(-1)!;
