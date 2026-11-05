@@ -44,12 +44,23 @@ import type { Modifier } from "../core/types.ts";
 /** A side's standing defense choice; "best" auto-picks the highest available score. */
 type DefensePolicy = DefenseChoice | "best";
 
+/** One fighter in the combat roster, with their standing defense policy. */
+interface Fighter {
+  combatant: Combatant;
+  policy: DefensePolicy;
+}
+
 export interface SoloState {
   registry: Registry;
   character: Character | null;
   dice: DiceSource;
-  /** Set by the foe command: both combatants (HP tracked) and their defense policies. */
-  combat: { you: Combatant; foe: Combatant; youDefense: DefensePolicy; foeDefense: DefensePolicy } | null;
+  /**
+   * The fight (issue #31): a roster, not two sides. `you` is the loaded
+   * character; `npcs` are everyone else. HP, shock, condition, maneuver and
+   * the once-per-turn Block/Parry counts live on each Combatant; the defense
+   * policy is per-fighter. turnIndex is informational, moved by `next`.
+   */
+  combat: { you: Fighter; npcs: Fighter[]; turnIndex: number } | null;
 }
 
 export function makeSoloState(): SoloState {
@@ -106,6 +117,83 @@ function combatantParrySkill(state: SoloState, combatant: Combatant): string | u
   })?.skillId;
 }
 
+/** Every fighter in the fight, you first. */
+function allFighters(combat: NonNullable<SoloState["combat"]>): Fighter[] {
+  return [combat.you, ...combat.npcs];
+}
+
+/**
+ * Match leading command words against fighter names, longest first, in whole
+ * words ("edge" matches "Edge Case"). Returns the fighter and the remaining
+ * words, an error string on an ambiguous match, or null when nothing matches.
+ */
+function matchFighter(
+  fighters: Fighter[],
+  words: string[],
+  exclude?: Fighter,
+): { fighter: Fighter; rest: string[] } | string | null {
+  const pool = exclude ? fighters.filter((f) => f !== exclude) : fighters;
+  for (let len = Math.min(words.length, 4); len >= 1; len--) {
+    const candidate = words.slice(0, len).join(" ").toLowerCase();
+    const matches = pool.filter((f) => {
+      const n = f.combatant.character.name.toLowerCase();
+      return n === candidate || n.startsWith(candidate + " ");
+    });
+    if (matches.length === 1) return { fighter: matches[0], rest: words.slice(len) };
+    if (matches.length > 1)
+      return `"${words.slice(0, len).join(" ")}" matches several fighters: ${matches.map((f) => f.combatant.character.name).join(", ")}.`;
+  }
+  return null;
+}
+
+/** The legacy foe… commands address the one opponent; with more, say so. */
+function soleNpc(state: SoloState): Fighter | string {
+  if (!state.combat) return "No fight yet. Load yourself (new/load) and a foe: foe <file>.";
+  if (state.combat.npcs.length !== 1)
+    return "Several fighters are in play — name one: npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> ...";
+  return state.combat.npcs[0];
+}
+
+/** Your attack target: the named fighter, or the only opponent (issue #31). */
+function resolveTarget(state: SoloState, args: string[]): { target: Fighter; rest: string[] } | string[] {
+  const combat = state.combat!;
+  const m = matchFighter(combat.npcs, args);
+  if (typeof m === "string") return [m];
+  if (m) return { target: m.fighter, rest: m.rest };
+  if (combat.npcs.length === 1) return { target: combat.npcs[0], rest: args };
+  return [
+    `Attack whom? Name the target first — fighters: ${combat.npcs.map((f) => f.combatant.character.name).join(", ")}.`,
+  ];
+}
+
+/** Set a fighter's standing defense (p. 28); shared by defend and npc. */
+function setDefensePolicy(state: SoloState, fighter: Fighter, raw: string, cmd: string): string[] {
+  const policy = raw.toLowerCase();
+  if (!["dodge", "block", "parry", "none", "best"].includes(policy)) {
+    return [`Usage: ${cmd} <dodge|block|parry|none|best>`];
+  }
+  const name = fighter.combatant.character.name;
+  if (policy === "dodge" || policy === "block" || policy === "parry") {
+    const score = defenseScore(state.registry, fighter.combatant.character, policy as DefenseChoice, {
+      parrySkillId: combatantParrySkill(state, fighter.combatant),
+      reeling: isReeling(hitPoints(fighter.combatant.character), fighter.combatant.hp),
+    });
+    if (score === null) {
+      return [
+        `${name} cannot ${policy} — ${policy === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28).`,
+      ];
+    }
+    fighter.policy = policy as DefensePolicy;
+    return [`${name} will ${policy} (${policy} ${score}) until you change it.`];
+  }
+  fighter.policy = policy as DefensePolicy;
+  return [
+    policy === "best"
+      ? `${name} will use the best available defense each time.`
+      : `${name} will not defend.`,
+  ];
+}
+
 /** The pp. 29-30 gates on taking any turn; returns the refusal lines, or null if they may act. */
 function actionGates(state: SoloState, combatant: Combatant): string[] | null {
   const name = combatant.character.name;
@@ -139,6 +227,49 @@ function stunnedTurn(state: SoloState, combatant: Combatant): string[] {
   return roll.success
     ? [first, `At the end of the turn, HT roll: rolled ${roll.total} — success by ${roll.margin}. ${name} shakes off the stun.`]
     : [first, `At the end of the turn, HT roll: rolled ${roll.total} — failure by ${roll.margin}. ${name} stays stunned.`];
+}
+
+/** All-Out Defense for one fighter (p. 25); shared by alloutdefense and npc. */
+function takeAllOutDefense(state: SoloState, fighter: Fighter, args: string[], cmd: string): string[] {
+  const combatant = fighter.combatant;
+  const name = combatant.character.name;
+  const gates = actionGates(state, combatant);
+  if (gates) return gates;
+  const sub = (args[0] ?? "").toLowerCase();
+  if (sub === "double") {
+    takeTurn(combatant, { kind: "all-out-defense", option: "double" });
+    return [
+      `${name} takes All-Out Defense (double): if a defense fails, a second, different one follows (p. 25). ` +
+        `This lasts until their next turn.`,
+    ];
+  }
+  if (sub === "increased") {
+    const which = (args[1] ?? "").toLowerCase();
+    if (!["dodge", "block", "parry"].includes(which)) {
+      return [`Usage: ${cmd} increased <dodge|block|parry>  (All-Out Defense, p. 25)`];
+    }
+    const parrySkillId = combatantParrySkill(state, combatant);
+    const score = defenseScore(state.registry, combatant.character, which as DefenseChoice, {
+      parrySkillId,
+      reeling: isReeling(hitPoints(combatant.character), combatant.hp),
+    });
+    if (score === null) {
+      return [`${name} cannot ${which} — no usable defense there (p. 28).`];
+    }
+    takeTurn(combatant, { kind: "all-out-defense", option: "increased", defense: which as "dodge" | "block" | "parry" });
+    return [`${name} takes All-Out Defense: +2 to ${which} (${which} ${score + 2}) until their next turn (p. 25).`];
+  }
+  return [`Usage: ${cmd} <increased dodge|block|parry | double>  (All-Out Defense, p. 25)`];
+}
+
+/** Do Nothing for one fighter (p. 25); shared by donothing and npc. */
+function doNothingTurn(state: SoloState, fighter: Fighter): string[] {
+  const gates = actionGates(state, fighter.combatant);
+  if (gates) return gates;
+  // Do Nothing (p. 25): no roll to stay conscious even at 0 HP or less,
+  // per the p. 29 exception.
+  takeTurn(fighter.combatant, { kind: "do-nothing" });
+  return [`${fighter.combatant.character.name} does nothing this turn.`];
 }
 
 /** How an attack command's maneuver shapes the exchange (p. 25). */
@@ -291,9 +422,16 @@ function runExchange(
     choice !== "none" &&
     defenseScore(state.registry, defender.character, choice, { parrySkillId, reeling }) === null
   ) {
+    const df = state.combat && allFighters(state.combat).find((f) => f.combatant === defender);
+    const hint =
+      df && state.combat && df === state.combat.you
+        ? "defend"
+        : df
+          ? `npc ${df.combatant.character.name.toLowerCase()} defend`
+          : "defend";
     return [
       `${defender.character.name} cannot ${choice} — ${choice === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28). ` +
-        `Set another defense with ${defender === state.combat?.you ? "defend" : "foedefend"}.`,
+        `Set another defense with ${hint}.`,
     ];
   }
 
@@ -685,17 +823,28 @@ export function runCommand(state: SoloState, line: string): string[] {
       }
       try {
         const result = importGcsSheet(parsed, state.registry);
-        state.combat = {
-          you: makeCombatant(state.character),
-          foe: makeCombatant(result.character),
-          youDefense: "best",
-          foeDefense: "best",
-        };
-        const order = turnOrder([state.combat.you, state.combat.foe]);
-        const lines = [
-          `${result.character.name} loaded as your foe (HP ${state.combat.foe.hp}).`,
-          `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
-        ];
+        const name = result.character.name;
+        if (
+          state.combat &&
+          allFighters(state.combat).some((f) => f.combatant.character.name.toLowerCase() === name.toLowerCase())
+        ) {
+          return [`A fighter named ${name} is already in the fight. Rename the sheet and load again.`];
+        }
+        const fighter: Fighter = { combatant: makeCombatant(result.character), policy: "best" };
+        const lines: string[] = [];
+        if (!state.combat) {
+          state.combat = {
+            you: { combatant: makeCombatant(state.character), policy: "best" },
+            npcs: [fighter],
+            turnIndex: 0,
+          };
+          lines.push(`${name} loaded as your foe (HP ${fighter.combatant.hp}).`);
+        } else {
+          state.combat.npcs.push(fighter);
+          lines.push(`${name} joins the fight (HP ${fighter.combatant.hp}).`);
+        }
+        const order = turnOrder(allFighters(state.combat).map((f) => f.combatant));
+        lines.push(`Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`);
         lines.push(...result.notes.map((note) => `Note: ${note}`));
         return lines;
       } catch (error) {
@@ -722,12 +871,11 @@ export function runCommand(state: SoloState, line: string): string[] {
         const foe = importGcsSheet(edge, state.registry);
         state.character = you.character;
         state.combat = {
-          you: makeCombatant(you.character),
-          foe: makeCombatant(foe.character),
-          youDefense: "best",
-          foeDefense: "best",
+          you: { combatant: makeCombatant(you.character), policy: "best" },
+          npcs: [{ combatant: makeCombatant(foe.character), policy: "best" }],
+          turnIndex: 0,
         };
-        const order = turnOrder([state.combat.you, state.combat.foe]);
+        const order = turnOrder(allFighters(state.combat).map((f) => f.combatant));
         const lines = [
           `Demo fight: ${you.character.name} vs ${foe.character.name}.`,
           `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
@@ -743,39 +891,52 @@ export function runCommand(state: SoloState, line: string): string[] {
 
     case "order": {
       if (!state.combat) return ["No fight yet. Use: foe <path to .gcs file>"];
-      const order = turnOrder([state.combat.you, state.combat.foe]);
+      const all = allFighters(state.combat);
+      const ordered = turnOrder(all.map((f) => f.combatant));
+      const current = ordered[state.combat.turnIndex % ordered.length];
       const hp = (c: Combatant) =>
         `${c.character.name} ${c.hp}` + (c.condition === "ok" ? "" : ` (${c.condition})`);
       return [
-        `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
-        `HP: ${hp(state.combat.you)}, ${hp(state.combat.foe)}.`,
-        `Defenses: ${state.combat.you.character.name} ${state.combat.youDefense}, ${state.combat.foe.character.name} ${state.combat.foeDefense}.`,
-        `Maneuvers: ${state.combat.you.character.name} ${maneuverName(state.combat.you.maneuver)}, ${state.combat.foe.character.name} ${maneuverName(state.combat.foe.maneuver)}.`,
+        `Turn order by Basic Speed (p. 24): ${ordered.map((c) => c.character.name).join(", ")} — ${current.character.name} to act.`,
+        `HP: ${all.map((f) => hp(f.combatant)).join(", ")}.`,
+        `Defenses: ${all.map((f) => `${f.combatant.character.name} ${f.policy}`).join(", ")}.`,
+        `Maneuvers: ${all.map((f) => `${f.combatant.character.name} ${maneuverName(f.combatant.maneuver)}`).join(", ")}.`,
       ];
     }
 
-    case "attack":
-    case "foeattack": {
-      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const [attacker, defender, policy] =
-        cmd === "attack"
-          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
-          : [state.combat.foe, state.combat.you, state.combat.youDefense];
-      return runExchange(state, attacker, defender, args, policy, { maneuver: { kind: "attack" } });
+    case "next": {
+      if (!state.combat) return ["No fight yet. Use: foe <path to .gcs file>"];
+      const ordered = turnOrder(allFighters(state.combat).map((f) => f.combatant));
+      state.combat.turnIndex = (state.combat.turnIndex + 1) % ordered.length;
+      return [`It is now ${ordered[state.combat.turnIndex].character.name}'s turn (p. 24).`];
     }
 
-    case "allout":
-    case "foeallout": {
+    case "attack": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const t = resolveTarget(state, args);
+      if (Array.isArray(t)) return t;
+      return runExchange(state, state.combat.you.combatant, t.target.combatant, t.rest, t.target.policy, {
+        maneuver: { kind: "attack" },
+      });
+    }
+
+    case "foeattack": {
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return runExchange(state, npc.combatant, state.combat!.you.combatant, args, state.combat!.you.policy, {
+        maneuver: { kind: "attack" },
+      });
+    }
+
+    case "allout": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
       const option = (args[0] ?? "").toLowerCase();
       if (!["determined", "double", "strong"].includes(option)) {
-        return [`Usage: ${cmd} <determined|double|strong> <skill> [dmg 2d+1 cut] [vs ...] [mods]  (All-Out Attack, p. 25)`];
+        return [`Usage: allout <determined|double|strong> [<target>] <skill> [dmg 2d+1 cut] [vs ...] [mods]  (All-Out Attack, p. 25)`];
       }
-      const [attacker, defender, policy] =
-        cmd === "allout"
-          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
-          : [state.combat.foe, state.combat.you, state.combat.youDefense];
-      return runExchange(state, attacker, defender, args.slice(1), policy, {
+      const t = resolveTarget(state, args.slice(1));
+      if (Array.isArray(t)) return t;
+      return runExchange(state, state.combat.you.combatant, t.target.combatant, t.rest, t.target.policy, {
         maneuver: { kind: "all-out-attack", option: option as "determined" | "double" | "strong" },
         bonus: option === "determined" ? { label: "all-out attack (determined)", value: 4 } : undefined,
         strong: option === "strong",
@@ -783,108 +944,145 @@ export function runCommand(state: SoloState, line: string): string[] {
       });
     }
 
-    case "moveattack":
-    case "foemoveattack": {
+    case "foeallout": {
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      const option = (args[0] ?? "").toLowerCase();
+      if (!["determined", "double", "strong"].includes(option)) {
+        return [`Usage: foeallout <determined|double|strong> <skill> [dmg 2d+1 cut] [vs ...] [mods]  (All-Out Attack, p. 25)`];
+      }
+      return runExchange(state, npc.combatant, state.combat!.you.combatant, args.slice(1), state.combat!.you.policy, {
+        maneuver: { kind: "all-out-attack", option: option as "determined" | "double" | "strong" },
+        bonus: option === "determined" ? { label: "all-out attack (determined)", value: 4 } : undefined,
+        strong: option === "strong",
+        double: option === "double",
+      });
+    }
+
+    case "moveattack": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const [attacker, defender, policy] =
-        cmd === "moveattack"
-          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
-          : [state.combat.foe, state.combat.you, state.combat.youDefense];
-      return runExchange(state, attacker, defender, args, policy, {
+      const t = resolveTarget(state, args);
+      if (Array.isArray(t)) return t;
+      return runExchange(state, state.combat.you.combatant, t.target.combatant, t.rest, t.target.policy, {
         maneuver: { kind: "move-and-attack" },
         bonus: { label: "move and attack", value: -4 },
         capMelee9: true,
       });
     }
 
-    case "shoot":
+    case "foemoveattack": {
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return runExchange(state, npc.combatant, state.combat!.you.combatant, args, state.combat!.you.policy, {
+        maneuver: { kind: "move-and-attack" },
+        bonus: { label: "move and attack", value: -4 },
+        capMelee9: true,
+      });
+    }
+
+    case "shoot": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const t = resolveTarget(state, args);
+      if (Array.isArray(t)) return t;
+      return runExchange(state, state.combat.you.combatant, t.target.combatant, t.rest, t.target.policy, {
+        ranged: true,
+      });
+    }
+
     case "foeshoot": {
-      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const [attacker, defender, policy] =
-        cmd === "shoot"
-          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
-          : [state.combat.foe, state.combat.you, state.combat.youDefense];
-      return runExchange(state, attacker, defender, args, policy, { ranged: true });
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return runExchange(state, npc.combatant, state.combat!.you.combatant, args, state.combat!.you.policy, {
+        ranged: true,
+      });
     }
 
-    case "alloutdefense":
-    case "foealloutdefense": {
+    case "npc": {
+      // Any fighter acts (issue #31): npc <name> <verb> [<target>] [...].
+      // The target defaults to you; name one to aim elsewhere.
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const side = cmd === "alloutdefense" ? "you" : "foe";
-      const combatant = state.combat[side];
-      const name = combatant.character.name;
-      const gates = actionGates(state, combatant);
-      if (gates) return gates;
-      const sub = (args[0] ?? "").toLowerCase();
-      if (sub === "double") {
-        takeTurn(combatant, { kind: "all-out-defense", option: "double" });
+      const all = allFighters(state.combat);
+      const m = matchFighter(all, args);
+      if (m === null)
         return [
-          `${name} takes All-Out Defense (double): if a defense fails, a second, different one follows (p. 25). ` +
-            `This lasts until their next turn.`,
+          `No fighter named "${args.join(" ")}". Fighters: ${all.map((f) => f.combatant.character.name).join(", ")}.`,
         ];
-      }
-      if (sub === "increased") {
-        const which = (args[1] ?? "").toLowerCase();
-        if (!["dodge", "block", "parry"].includes(which)) {
-          return [`Usage: ${cmd} increased <dodge|block|parry>  (All-Out Defense, p. 25)`];
+      if (typeof m === "string") return [m];
+      const actor = m.fighter;
+      const [verbRaw, ...rest] = m.rest;
+      const verb = (verbRaw ?? "").toLowerCase();
+      if (verb === "attack" || verb === "shoot" || verb === "moveattack" || verb === "allout") {
+        let restArgs = rest;
+        let opts: ExchangeOptions;
+        if (verb === "allout") {
+          const option = (rest[0] ?? "").toLowerCase();
+          if (!["determined", "double", "strong"].includes(option)) {
+            return [`Usage: npc <name> allout <determined|double|strong> [<target>] <skill> [...]  (All-Out Attack, p. 25)`];
+          }
+          restArgs = rest.slice(1);
+          opts = {
+            maneuver: { kind: "all-out-attack", option: option as "determined" | "double" | "strong" },
+            bonus: option === "determined" ? { label: "all-out attack (determined)", value: 4 } : undefined,
+            strong: option === "strong",
+            double: option === "double",
+          };
+        } else if (verb === "shoot") {
+          opts = { ranged: true };
+        } else if (verb === "moveattack") {
+          opts = {
+            maneuver: { kind: "move-and-attack" },
+            bonus: { label: "move and attack", value: -4 },
+            capMelee9: true,
+          };
+        } else {
+          opts = { maneuver: { kind: "attack" } };
         }
-        const parrySkillId = combatantParrySkill(state, combatant);
-        const score = defenseScore(state.registry, combatant.character, which as DefenseChoice, {
-          parrySkillId,
-          reeling: isReeling(hitPoints(combatant.character), combatant.hp),
-        });
-        if (score === null) {
-          return [`${name} cannot ${which} — no usable defense there (p. 28).`];
+        let target = state.combat.you;
+        const tm = matchFighter(all, restArgs, actor);
+        if (typeof tm === "string") return [tm];
+        if (tm) {
+          target = tm.fighter;
+          restArgs = tm.rest;
         }
-        takeTurn(combatant, { kind: "all-out-defense", option: "increased", defense: which as "dodge" | "block" | "parry" });
-        return [`${name} takes All-Out Defense: +2 to ${which} (${which} ${score + 2}) until their next turn (p. 25).`];
+        return runExchange(state, actor.combatant, target.combatant, restArgs, target.policy, opts);
       }
-      return [`Usage: ${cmd} <increased dodge|block|parry | double>  (All-Out Defense, p. 25)`];
+      if (verb === "defend") return setDefensePolicy(state, actor, (rest[0] ?? "").toLowerCase(), "npc <name> defend");
+      if (verb === "alloutdefense") return takeAllOutDefense(state, actor, rest, "npc <name> alloutdefense");
+      if (verb === "donothing") return doNothingTurn(state, actor);
+      return [`Usage: npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> ...`];
     }
 
-    case "donothing":
+    case "alloutdefense": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      return takeAllOutDefense(state, state.combat.you, args, "alloutdefense");
+    }
+
+    case "foealloutdefense": {
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return takeAllOutDefense(state, npc, args, "foealloutdefense");
+    }
+
+    case "donothing": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      return doNothingTurn(state, state.combat.you);
+    }
+
     case "foedonothing": {
-      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const side = cmd === "donothing" ? "you" : "foe";
-      const combatant = state.combat[side];
-      const gates = actionGates(state, combatant);
-      if (gates) return gates;
-      // Do Nothing (p. 25): no roll to stay conscious even at 0 HP or less,
-      // per the p. 29 exception.
-      takeTurn(combatant, { kind: "do-nothing" });
-      return [`${combatant.character.name} does nothing this turn.`];
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return doNothingTurn(state, npc);
     }
 
-    case "defend":
-    case "foedefend": {
+    case "defend": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      const raw = (args[0] ?? "").toLowerCase();
-      if (!["dodge", "block", "parry", "none", "best"].includes(raw)) {
-        return [`Usage: ${cmd} <dodge|block|parry|none|best>`];
-      }
-      const policy = raw as DefensePolicy;
-      const side = cmd === "defend" ? "you" : "foe";
-      const combatant = state.combat[side];
-      const name = combatant.character.name;
-      if (policy === "dodge" || policy === "block" || policy === "parry") {
-        const score = defenseScore(state.registry, combatant.character, policy, {
-          parrySkillId: combatantParrySkill(state, combatant),
-          reeling: isReeling(hitPoints(combatant.character), combatant.hp),
-        });
-        if (score === null) {
-          return [
-            `${name} cannot ${policy} — ${policy === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28).`,
-          ];
-        }
-        state.combat[side === "you" ? "youDefense" : "foeDefense"] = policy;
-        return [`${name} will ${policy} (${policy} ${score}) until you change it.`];
-      }
-      state.combat[side === "you" ? "youDefense" : "foeDefense"] = policy;
-      return [
-        policy === "best"
-          ? `${name} will use the best available defense each time.`
-          : `${name} will not defend.`,
-      ];
+      return setDefensePolicy(state, state.combat.you, (args[0] ?? "").toLowerCase(), "defend");
+    }
+
+    case "foedefend": {
+      const npc = soleNpc(state);
+      if (typeof npc === "string") return [npc];
+      return setDefensePolicy(state, npc, (args[0] ?? "").toLowerCase(), "foedefend");
     }
 
     case "help":
@@ -899,17 +1097,19 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
         "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
-        "  foe <path>            Load an opponent from a .gcs file and start a fight.",
+        "  foe <path>            Load an opponent from a .gcs file; repeat to add more fighters.",
         "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
-        "  order                 Show turn order, current HP, conditions and defense choices.",
-        "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
-        "  allout <determined|double|strong> <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
-        "  moveattack <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
-        "  shoot <skill> dmg <pool> <type> rng <yd> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  Ranged attack (pp. 27-28).",
+        "  order                 Turn order (…to act), HP, conditions, defenses and maneuvers for every fighter.",
+        "  next                  Advance to the next fighter's turn (p. 24).",
+        "  attack [<target>] <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack; name a target only with several foes.",
+        "  shoot [<target>] <skill> dmg <pool> <type> rng <yd> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  Ranged attack (pp. 27-28).",
+        "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
+        "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
         "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
         "  donothing             Do Nothing this turn (p. 25).",
-        "  foeattack / foeallout / foemoveattack / foeshoot / foealloutdefense / foedonothing  The same, for your foe.",
-        "  defend / foedefend <dodge|block|parry|none|best>  Set a side's standing defense.",
+        "  defend <dodge|block|parry|none|best>  Set your standing defense.",
+        "  npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
+        "  foeattack / foeshoot / foedefend / ...  Shorthand for the one opponent; with several, use npc.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
         "  help, quit",
