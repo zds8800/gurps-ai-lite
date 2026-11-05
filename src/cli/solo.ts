@@ -10,7 +10,7 @@
 
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeCharacter, pointTotal } from "../model/attribute.ts";
 import type { AttributeId, Character } from "../model/attribute.ts";
 import { baseSkillLevel } from "../model/defaults.ts";
@@ -540,6 +540,44 @@ export function runCommand(state: SoloState, line: string): string[] {
       }
     }
 
+    case "fight": {
+      // Owner shortcut (issue #25): a demo fight in one word — Mara Voss vs
+      // the edge-case sheet. Paths resolve against this file, not the
+      // terminal's working directory. Re-running it restarts the fight.
+      const fixture = (name: string) =>
+        fileURLToPath(new URL(`../../tests/fixtures/${name}`, import.meta.url));
+      let mara: unknown;
+      let edge: unknown;
+      try {
+        mara = JSON.parse(readFileSync(fixture("mara-voss.gcs"), "utf-8"));
+        edge = JSON.parse(readFileSync(fixture("edge-case.gcs"), "utf-8"));
+      } catch {
+        return ["The demo sheets (tests/fixtures/mara-voss.gcs, edge-case.gcs) are missing from this copy."];
+      }
+      try {
+        const you = importGcsSheet(mara, state.registry);
+        const foe = importGcsSheet(edge, state.registry);
+        state.character = you.character;
+        state.combat = {
+          you: makeCombatant(you.character),
+          foe: makeCombatant(foe.character),
+          youDefense: "best",
+          foeDefense: "best",
+        };
+        const order = turnOrder([state.combat.you, state.combat.foe]);
+        const lines = [
+          `Demo fight: ${you.character.name} vs ${foe.character.name}.`,
+          `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
+          "Try: attack brawling, foeattack broadsword dmg 1d+1 cut, defend dodge, order.",
+        ];
+        lines.push(...you.notes.map((note) => `Note: ${note}`));
+        lines.push(...foe.notes.map((note) => `Note: ${note}`));
+        return lines;
+      } catch (error) {
+        return [(error as Error).message];
+      }
+    }
+
     case "order": {
       if (!state.combat) return ["No fight yet. Use: foe <path to .gcs file>"];
       const order = turnOrder([state.combat.you, state.combat.foe]);
@@ -604,6 +642,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  foe <path>            Load an opponent from a .gcs file and start a fight.",
+        "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
         "  order                 Show turn order, current HP and defense choices.",
         "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
         "  foeattack <skill> [dmg ...] [mods]  Your foe attacks you.",
