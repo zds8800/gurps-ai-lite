@@ -28,6 +28,7 @@ import { strengthDamage } from "../model/secondary.ts";
 import {
   attackExchange,
   bestDefense,
+  defenseScore,
   makeCombatant,
   narrate,
   turnOrder,
@@ -36,12 +37,15 @@ import type { Combatant, DamageType, DefenseChoice } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
 
+/** A side's standing defense choice; "best" auto-picks the highest available score. */
+type DefensePolicy = DefenseChoice | "best";
+
 export interface SoloState {
   registry: Registry;
   character: Character | null;
   dice: DiceSource;
-  /** Set by the foe command: you and your opponent as combatants (HP tracked). */
-  combat: { you: Combatant; foe: Combatant } | null;
+  /** Set by the foe command: both combatants (HP tracked) and their defense policies. */
+  combat: { you: Combatant; foe: Combatant; youDefense: DefensePolicy; foeDefense: DefensePolicy } | null;
 }
 
 export function makeSoloState(): SoloState {
@@ -88,6 +92,128 @@ function formatMods(mods: Modifier[]): string {
 /** Relative level with an explicit sign, e.g. +0, -1, +2. */
 function relSigned(rel: number): string {
   return rel >= 0 ? `+${rel}` : `${rel}`;
+}
+
+/** The combat skill a combatant parries with: their first trained combat skill, if any. */
+function combatantParrySkill(state: SoloState, combatant: Combatant): string | undefined {
+  return combatant.character.skills.find((r) => {
+    const def = state.registry.skill(r.skillId);
+    return def?.combat && r.points > 0;
+  })?.skillId;
+}
+
+/**
+ * One attack exchange, either direction (issue #21): `attack` is you against
+ * the foe, `foeattack` is the foe against you. The defender's policy (set by
+ * defend/foedefend) picks the defense; a `vs` token on the command overrides
+ * it once. Syntax: <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods].
+ */
+function runExchange(
+  state: SoloState,
+  attacker: Combatant,
+  defender: Combatant,
+  args: string[],
+  defensePolicy: DefensePolicy,
+): string[] {
+  const skillWords: string[] = [];
+  const modTokens: string[] = [];
+  let damage: { poolText: string; type: string } | null = null;
+  let defenseOverride: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    if (t.toLowerCase() === "dmg") {
+      damage = { poolText: args[i + 1] ?? "", type: (args[i + 2] ?? "").toLowerCase() };
+      i += 2;
+    } else if (t.toLowerCase() === "vs") {
+      defenseOverride = (args[i + 1] ?? "").toLowerCase();
+      i += 1;
+    } else if (/^[+-]\d+$/.test(t)) {
+      modTokens.push(t);
+    } else {
+      skillWords.push(t);
+    }
+  }
+  const found = findSkillRef(state, skillWords.join(" "));
+  if (typeof found === "string") return [found];
+  const mods = parseModifiers(modTokens);
+  if (typeof mods === "string") return [mods];
+
+  let base: number | null;
+  try {
+    base = baseSkillLevel(attacker.character, found);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  if (base === null) return [`${displayName(found)} has no default (p. 13). ${attacker.character.name} cannot attempt it untrained.`];
+
+  // Damage: explicit "dmg 2d+1 cut", or an unarmed punch (thr-1 cr, p. 26).
+  let pool;
+  let type: DamageType;
+  if (damage) {
+    try {
+      pool = parseDicePool(damage.poolText);
+    } catch (error) {
+      return [(error as Error).message];
+    }
+    if (!["cr", "cut", "imp", "pi-", "pi", "pi+"].includes(damage.type)) {
+      return [`Bad damage type "${damage.type}". Use cr, cut, imp, pi-, pi or pi+ (p. 29).`];
+    }
+    type = damage.type as DamageType;
+  } else if (found.id === "brawling" || found.id === "karate") {
+    const thrust = strengthDamage(attacker.character.attributes.ST, "thrust");
+    pool = { dice: thrust.dice, adds: thrust.adds - 1 }; // punch: thr-1 cr (p. 26)
+    type = "cr";
+  } else {
+    return [
+      `Give the weapon's damage: ... dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).`,
+    ];
+  }
+
+  // The defender's choice: one-off "vs" override, else their standing policy.
+  const parrySkillId = combatantParrySkill(state, defender);
+  let choice: DefenseChoice;
+  if (defenseOverride !== null) {
+    if (!["dodge", "block", "parry", "none"].includes(defenseOverride)) {
+      return [`Bad defense "${defenseOverride}". Use dodge, block, parry or none (p. 28).`];
+    }
+    choice = defenseOverride as DefenseChoice;
+  } else if (defensePolicy === "best") {
+    const best = bestDefense(state.registry, defender.character, { parrySkillId });
+    if (!best) return [`${defender.character.name} has no active defense available.`];
+    choice = best.choice;
+  } else {
+    choice = defensePolicy;
+  }
+  if (
+    choice !== "none" &&
+    defenseScore(state.registry, defender.character, choice, { parrySkillId }) === null
+  ) {
+    return [
+      `${defender.character.name} cannot ${choice} — ${choice === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28). ` +
+        `Set another defense with ${defender === state.combat?.you ? "defend" : "foedefend"}.`,
+    ];
+  }
+
+  const outcome = attackExchange(
+    {
+      attacker,
+      attackSkill: base,
+      attackModifiers: mods,
+      damage: pool,
+      damageType: type,
+      defender,
+      defense: choice,
+      defenseContext: { parrySkillId },
+    },
+    state.registry,
+    state.dice,
+  );
+  return narrate(outcome, {
+    attacker: attacker.character.name,
+    defender: defender.character.name,
+    attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
+    defense: choice,
+  });
 }
 
 /** Run one command line. Returns the lines to print. */
@@ -396,7 +522,12 @@ export function runCommand(state: SoloState, line: string): string[] {
       }
       try {
         const result = importGcsSheet(parsed, state.registry);
-        state.combat = { you: makeCombatant(state.character), foe: makeCombatant(result.character) };
+        state.combat = {
+          you: makeCombatant(state.character),
+          foe: makeCombatant(result.character),
+          youDefense: "best",
+          foeDefense: "best",
+        };
         const order = turnOrder([state.combat.you, state.combat.foe]);
         const lines = [
           `${result.character.name} loaded as your foe (HP ${state.combat.foe.hp}).`,
@@ -415,102 +546,49 @@ export function runCommand(state: SoloState, line: string): string[] {
       return [
         `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
         `HP: ${state.combat.you.character.name} ${state.combat.you.hp}, ${state.combat.foe.character.name} ${state.combat.foe.hp}.`,
+        `Defenses: ${state.combat.you.character.name} ${state.combat.youDefense}, ${state.combat.foe.character.name} ${state.combat.foeDefense}.`,
       ];
     }
 
     case "attack": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      // attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [+n or -n ...]
-      const skillWords: string[] = [];
-      const modTokens: string[] = [];
-      let damage: { poolText: string; type: string } | null = null;
-      let defenseChoice: DefenseChoice | null = null;
-      for (let i = 0; i < args.length; i++) {
-        const t = args[i];
-        if (t.toLowerCase() === "dmg" && i + 2 < args.length + 1) {
-          damage = { poolText: args[i + 1] ?? "", type: (args[i + 2] ?? "").toLowerCase() };
-          i += 2;
-        } else if (t.toLowerCase() === "vs") {
-          defenseChoice = (args[i + 1] ?? "").toLowerCase() as DefenseChoice;
-          i += 1;
-        } else if (/^[+-]\d+$/.test(t)) {
-          modTokens.push(t);
-        } else {
-          skillWords.push(t);
-        }
-      }
-      const found = findSkillRef(state, skillWords.join(" "));
-      if (typeof found === "string") return [found];
-      const mods = parseModifiers(modTokens);
-      if (typeof mods === "string") return [mods];
+      return runExchange(state, state.combat.you, state.combat.foe, args, state.combat.foeDefense);
+    }
 
-      let base: number | null;
-      try {
-        base = baseSkillLevel(state.combat.you.character, found);
-      } catch (error) {
-        return [(error as Error).message];
-      }
-      if (base === null) return [`${displayName(found)} has no default (p. 13). You cannot attempt it untrained.`];
+    case "foeattack": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      return runExchange(state, state.combat.foe, state.combat.you, args, state.combat.youDefense);
+    }
 
-      // Damage: explicit "dmg 2d+1 cut", or an unarmed punch (thr-1 cr, p. 26).
-      let pool;
-      let type: DamageType;
-      if (damage) {
-        try {
-          pool = parseDicePool(damage.poolText);
-        } catch (error) {
-          return [(error as Error).message];
-        }
-        if (!["cr", "cut", "imp", "pi-", "pi", "pi+"].includes(damage.type)) {
-          return [`Bad damage type "${damage.type}". Use cr, cut, imp, pi-, pi or pi+ (p. 29).`];
-        }
-        type = damage.type as DamageType;
-      } else if (found.id === "brawling" || found.id === "karate") {
-        const thrust = strengthDamage(state.combat.you.character.attributes.ST, "thrust");
-        pool = { dice: thrust.dice, adds: thrust.adds - 1 }; // punch: thr-1 cr (p. 26)
-        type = "cr";
-      } else {
-        return [`Give the weapon's damage: attack ${skillWords.join(" ")} dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).`];
+    case "defend":
+    case "foedefend": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const raw = (args[0] ?? "").toLowerCase();
+      if (!["dodge", "block", "parry", "none", "best"].includes(raw)) {
+        return [`Usage: ${cmd} <dodge|block|parry|none|best>`];
       }
-
-      // The foe defends with the named defense, or its best available one.
-      const foe = state.combat.foe;
-      const parrySkillId = foe.character.skills.find((r) => {
-        const def = state.registry.skill(r.skillId);
-        return def?.combat && r.points > 0;
-      })?.skillId;
-      let choice: DefenseChoice;
-      if (defenseChoice) {
-        if (!["dodge", "block", "parry", "none"].includes(defenseChoice)) {
-          return [`Bad defense "${defenseChoice}". Use dodge, block, parry or none (p. 28).`];
+      const policy = raw as DefensePolicy;
+      const side = cmd === "defend" ? "you" : "foe";
+      const combatant = state.combat[side];
+      const name = combatant.character.name;
+      if (policy === "dodge" || policy === "block" || policy === "parry") {
+        const score = defenseScore(state.registry, combatant.character, policy, {
+          parrySkillId: combatantParrySkill(state, combatant),
+        });
+        if (score === null) {
+          return [
+            `${name} cannot ${policy} — ${policy === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28).`,
+          ];
         }
-        choice = defenseChoice;
-      } else {
-        const best = bestDefense(state.registry, foe.character, { parrySkillId });
-        if (!best) return [`${foe.character.name} has no active defense available.`];
-        choice = best.choice;
+        state.combat[side === "you" ? "youDefense" : "foeDefense"] = policy;
+        return [`${name} will ${policy} (${policy} ${score}) until you change it.`];
       }
-
-      const outcome = attackExchange(
-        {
-          attacker: state.combat.you,
-          attackSkill: base,
-          attackModifiers: mods,
-          damage: pool,
-          damageType: type,
-          defender: foe,
-          defense: choice,
-          defenseContext: { parrySkillId },
-        },
-        state.registry,
-        state.dice,
-      );
-      return narrate(outcome, {
-        attacker: state.combat.you.character.name,
-        defender: foe.character.name,
-        attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
-        defense: choice,
-      });
+      state.combat[side === "you" ? "youDefense" : "foeDefense"] = policy;
+      return [
+        policy === "best"
+          ? `${name} will use the best available defense each time.`
+          : `${name} will not defend.`,
+      ];
     }
 
     case "help":
@@ -526,8 +604,10 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  foe <path>            Load an opponent from a .gcs file and start a fight.",
-        "  order                 Show turn order and current HP.",
+        "  order                 Show turn order, current HP and defense choices.",
         "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
+        "  foeattack <skill> [dmg ...] [mods]  Your foe attacks you.",
+        "  defend / foedefend <dodge|block|parry|none|best>  Set a side's standing defense.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",
         "  help, quit",
