@@ -35,6 +35,8 @@ import {
   turnOrder,
 } from "../combat/attack.ts";
 import { consciousnessCheck, isReeling, stunRecovery } from "../combat/injury.ts";
+import { atHalfDamage, outOfRange, rangeModifier } from "../combat/ranged.ts";
+import type { RangeStats } from "../combat/ranged.ts";
 import type { Combatant, DamageType, DefenseChoice, Maneuver } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
@@ -141,7 +143,7 @@ function stunnedTurn(state: SoloState, combatant: Combatant): string[] {
 
 /** How an attack command's maneuver shapes the exchange (p. 25). */
 interface ExchangeOptions {
-  maneuver: Maneuver;
+  maneuver?: Maneuver;
   /** Flat attack modifier from the maneuver: +4 Determined, -4 Move and Attack. */
   bonus?: { label: string; value: number };
   /** All-Out Attack (Strong): +2 damage, or +1 per die if better (p. 25). */
@@ -150,6 +152,8 @@ interface ExchangeOptions {
   double?: boolean;
   /** Move and Attack: melee adjusted skill cannot exceed 9 (p. 25). */
   capMelee9?: boolean;
+  /** Ranged attack (shoot, p. 27): parse rng/half/max and ranged maneuver tokens. */
+  ranged?: boolean;
 }
 
 /**
@@ -197,6 +201,8 @@ function runExchange(
   const modTokens: string[] = [];
   let damage: { poolText: string; type: string } | null = null;
   let defenseOverride: string | null = null;
+  let range: Partial<Record<"rng" | "half" | "max", number>> = {};
+  let rangedManeuver: "allout" | "moveattack" | null = null;
   for (let i = 0; i < args.length; i++) {
     const t = args[i];
     if (t.toLowerCase() === "dmg") {
@@ -205,11 +211,25 @@ function runExchange(
     } else if (t.toLowerCase() === "vs") {
       defenseOverride = (args[i + 1] ?? "").toLowerCase();
       i += 1;
+    } else if (["rng", "half", "max"].includes(t.toLowerCase())) {
+      const value = Number(args[i + 1]);
+      if (!Number.isFinite(value) || value < 0) return [`Bad ${t} value "${args[i + 1] ?? ""}". Give yards as a number, 0 or more.`];
+      range[t.toLowerCase() as "rng" | "half" | "max"] = value;
+      i += 1;
+    } else if (["allout", "moveattack"].includes(t.toLowerCase())) {
+      if (!opts.ranged) return [`"${t}" as a flag is only for shoot; melee uses the ${t} command with its own options (p. 25).`];
+      rangedManeuver = t.toLowerCase() as "allout" | "moveattack";
     } else if (/^[+-]\d+$/.test(t)) {
       modTokens.push(t);
     } else {
       skillWords.push(t);
     }
+  }
+  if (!opts.ranged && (range.rng !== undefined || range.half !== undefined || range.max !== undefined)) {
+    return [`rng/half/max are for ranged attacks: use shoot <skill> dmg <pool> <type> rng <yards> half <1/2D> max <Max> (p. 27).`];
+  }
+  if (opts.ranged && (range.rng === undefined || range.half === undefined || range.max === undefined)) {
+    return [`Usage: shoot <skill> dmg <pool> <type> rng <yards> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  (p. 27).`];
   }
   const found = findSkillRef(state, skillWords.join(" "));
   if (typeof found === "string") return [found];
@@ -277,12 +297,38 @@ function runExchange(
     ];
   }
 
+  // Ranged (p. 27): Max range refusal, the Size and Speed/Range table
+  // modifier (p. 28), and 1/2D halving.
+  let stats: RangeStats | null = null;
+  if (opts.ranged) {
+    if (!damage) return ["A ranged attack needs its weapon's damage: ... dmg 2d+2 cut (p. 27)."];
+    stats = { range: range.rng!, half: range.half!, max: range.max! };
+    if (outOfRange(stats)) {
+      return [`${defender.character.name} is beyond Max range: ${stats.range} yd > ${stats.max} yd (p. 27).`];
+    }
+  }
+
   // Maneuver effects on the attack (p. 25): flat bonuses, the Strong damage
   // boost, and the Move and Attack cap of 9 on adjusted melee skill.
   const maneuverMods: Modifier[] = [...mods];
   if (opts.bonus) maneuverMods.push(opts.bonus);
+  let maneuver = opts.maneuver ?? { kind: "attack" } as Maneuver;
+  let capMelee9 = opts.capMelee9 ?? false;
+  if (opts.ranged && rangedManeuver === "allout") {
+    // Ranged All-Out Attack is a single attack at +1 (p. 27) — no options.
+    maneuver = { kind: "all-out-attack", option: "determined", ranged: true };
+    maneuverMods.push({ label: "all-out attack (ranged)", value: 1 });
+  } else if (opts.ranged && rangedManeuver === "moveattack") {
+    // Ranged Move and Attack: -4, and the skill cap does not apply (p. 25).
+    maneuver = { kind: "move-and-attack" };
+    maneuverMods.push({ label: "move and attack", value: -4 });
+    capMelee9 = false;
+  }
+  if (stats) {
+    maneuverMods.push({ label: `range ${stats.range} yd`, value: rangeModifier(stats.range) });
+  }
   const modSum = maneuverMods.reduce((s, m) => s + m.value, 0);
-  if (opts.capMelee9) {
+  if (capMelee9) {
     // "Your adjusted skill cannot exceed 9." Shock (engine-side) also counts,
     // so cap the base such that base + mods - shock <= 9.
     base = Math.min(base, 9 - modSum + attacker.shock);
@@ -298,7 +344,7 @@ function runExchange(
 
   // The turn is taken now that the exchange is real: maneuver set, the
   // once-per-turn Block and Parry counts reset (pp. 25, 28).
-  takeTurn(attacker, opts.maneuver);
+  takeTurn(attacker, maneuver);
 
   const runOnce = () =>
     attackExchange(
@@ -311,6 +357,7 @@ function runExchange(
         defender,
         defense: choice,
         defenseContext: { parrySkillId },
+        halfDamage: stats !== null && atHalfDamage(stats),
       },
       state.registry,
       state.dice,
@@ -318,7 +365,10 @@ function runExchange(
   const names = {
     attacker: attacker.character.name,
     defender: defender.character.name,
-    attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
+    attackLabel:
+      `${displayName(found)} (${formatDicePool(pool)} ${type}` +
+      (stats ? `, rng ${stats.range} yd` : "") +
+      ")",
     defense: choice,
   };
   const lines = [...prefix, ...narrate(runOnce(), names)];
@@ -747,6 +797,16 @@ export function runCommand(state: SoloState, line: string): string[] {
       });
     }
 
+    case "shoot":
+    case "foeshoot": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const [attacker, defender, policy] =
+        cmd === "shoot"
+          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
+          : [state.combat.foe, state.combat.you, state.combat.youDefense];
+      return runExchange(state, attacker, defender, args, policy, { ranged: true });
+    }
+
     case "alloutdefense":
     case "foealloutdefense": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
@@ -845,9 +905,10 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
         "  allout <determined|double|strong> <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
         "  moveattack <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
+        "  shoot <skill> dmg <pool> <type> rng <yd> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  Ranged attack (pp. 27-28).",
         "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
         "  donothing             Do Nothing this turn (p. 25).",
-        "  foeattack / foeallout / foemoveattack / foealloutdefense / foedonothing  The same, for your foe.",
+        "  foeattack / foeallout / foemoveattack / foeshoot / foealloutdefense / foedonothing  The same, for your foe.",
         "  defend / foedefend <dodge|block|parry|none|best>  Set a side's standing defense.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",

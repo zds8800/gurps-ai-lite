@@ -62,7 +62,7 @@ export function makeCombatant(character: Character): Combatant {
 export type Maneuver =
   | { kind: "do-nothing" }
   | { kind: "attack" }
-  | { kind: "all-out-attack"; option: "determined" | "double" | "strong" }
+  | { kind: "all-out-attack"; option: "determined" | "double" | "strong"; ranged?: boolean }
   | { kind: "all-out-defense"; option: "increased"; defense: "dodge" | "block" | "parry" }
   | { kind: "all-out-defense"; option: "double" }
   | { kind: "move-and-attack" };
@@ -73,7 +73,9 @@ export function maneuverName(m: Maneuver): string {
     case "do-nothing": return "do nothing";
     case "attack": return "attack";
     case "move-and-attack": return "move and attack";
-    case "all-out-attack": return `all-out attack (${m.option})`;
+    case "all-out-attack":
+      // Ranged All-Out Attack has no options: a flat +1 (p. 27).
+      return m.ranged ? "all-out attack (ranged, +1)" : `all-out attack (${m.option})`;
     case "all-out-defense":
       return m.option === "increased" ? `all-out defense (+2 ${m.defense})` : "all-out defense (double)";
   }
@@ -290,6 +292,8 @@ export interface AttackOutcome {
   hit: boolean;
   /** Basic damage rolled, after minimums and any 1/2D halving; null on a miss. */
   basicDamage: number | null;
+  /** True when basic damage was halved for being at or past 1/2D range (p. 27). */
+  halfDamageApplied: boolean;
   /** True when a roll of 3 dealt maximum damage with no damage roll (p. 27). */
   maxDamageCrit: boolean;
   penetrating: number | null;
@@ -466,6 +470,7 @@ export function attackExchange(
     defense2,
     hit,
     basicDamage: basic,
+    halfDamageApplied: hit && (setup.halfDamage ?? false),
     maxDamageCrit,
     penetrating,
     injury,
@@ -555,6 +560,7 @@ export function narrate(
   }
   lines.push(
     `Hit for ${outcome.basicDamage} basic damage` +
+      (outcome.halfDamageApplied ? " (halved: at or past 1/2D range, p. 27)" : "") +
       (outcome.penetrating !== null ? `; ${outcome.penetrating} penetrates` : "") +
       `; injury ${outcome.injury}. ${names.defender} is at HP ${outcome.defenderHpAfter}.`,
   );
