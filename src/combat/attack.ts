@@ -1,12 +1,14 @@
 /**
  * The combat slice (issue #19; Lite pp. 24-29): turn order, one attack roll,
- * one active defense roll, and damage applied to HP.
+ * one active defense roll, and damage applied to HP. Issue #23 added the
+ * injury effects of pp. 29-30 (reeling, shock, major wounds, stun,
+ * consciousness, death checks); those rules live in injury.ts.
  *
  * Scope is deliberately narrow: the plain Attack maneuver only, defenses are
  * Dodge/Block/Parry per the p. 28 formulas, damage follows p. 29. Position,
  * reach, range and awareness are handed in as inputs (the "scene fact" /
  * yes-no shapes from Discussion #17), never invented. Other maneuvers, Aim
- * and ranged-specific rules, shock and knockdown are later slices.
+ * and ranged-specific rules are later slices.
  */
 
 import type { Character } from "../model/attribute.ts";
@@ -18,16 +20,25 @@ import type { DicePool } from "../core/dice-pool.ts";
 import { formatDicePool, rollDicePool } from "../core/dice-pool.ts";
 import { resolve } from "../core/success-roll.ts";
 import type { Modifier, RollResult } from "../core/types.ts";
+import type { Condition, InjuryEffects } from "./injury.ts";
+import { applyInjury, consciousnessCheck, isReeling, reelingDodge } from "./injury.ts";
 
 /** A character in a fight, with current HP tracked separately from the sheet. */
 export interface Combatant {
   character: Character;
   /** Current HP; starts at ST (p. 6) and drops as injury lands. */
   hp: number;
+  /**
+   * Shock (p. 30): a penalty to this combatant's next DX/IQ-based roll,
+   * equal to the HP they just lost, capped at -4. Spent on their next turn.
+   */
+  shock: number;
+  /** Injury state ladder (pp. 29-30). Anything past "stunned" cannot act. */
+  condition: Condition;
 }
 
 export function makeCombatant(character: Character): Combatant {
-  return { character, hp: hitPoints(character) };
+  return { character, hp: hitPoints(character), shock: 0, condition: "ok" };
 }
 
 /**
@@ -69,6 +80,8 @@ export interface DefenseContext {
   shieldDB?: number;
   /** Skill the defender parries with (required for a parry). */
   parrySkillId?: string;
+  /** Reeling (p. 29): below 1/3 HP, Dodge is halved (round up). */
+  reeling?: boolean;
 }
 
 /**
@@ -84,8 +97,10 @@ export function defenseScore(
 ): number | null {
   const shieldDB = context.shieldDB ?? 0;
   switch (choice) {
-    case "dodge":
-      return dodgeScore(defender, context.encumbrance ?? 0) + shieldDB;
+    case "dodge": {
+      const dodge = dodgeScore(defender, context.encumbrance ?? 0);
+      return (context.reeling ? reelingDodge(dodge) : dodge) + shieldDB;
+    }
     case "block": {
       const shield = registry.skill("shield");
       if (!shield) return null;
@@ -169,53 +184,87 @@ export interface AttackSetup {
 
 export interface AttackOutcome {
   attack: RollResult;
+  /** Shock penalty spent on this attack roll (p. 30), or null if none. */
+  shockApplied: number | null;
   /** Null when no defense roll happened (critical hit, unaware, or "none"). */
   defense: RollResult | null;
   defenseScoreUsed: number | null;
+  /** The defender's HT roll to stay conscious at 0 HP or less (p. 29), if required. */
+  defenderConsciousness: { roll: RollResult; modifier: number; stayedConscious: boolean } | null;
+  /** True when the defense rolled at -4 for stun (p. 30). */
+  defenseStunned: boolean;
   hit: boolean;
   /** Basic damage rolled, after minimums and any 1/2D halving; null on a miss. */
   basicDamage: number | null;
   penetrating: number | null;
   injury: number | null;
+  /** Shock, major-wound and death-check results of the hit (pp. 29-30); null on a miss. */
+  injuryEffects: InjuryEffects | null;
   defenderHpAfter: number;
 }
 
 /**
  * Resolve one attack: the attack roll, the defense roll if any, and damage.
- * On a hit the defender's HP drops (the Combatant is mutated). A critical
- * hit skips the defense roll (p. 28).
+ * On a hit the defender's HP drops and the injury effects of pp. 29-30 play
+ * out (the Combatant is mutated). A critical hit skips the defense roll
+ * (p. 28). An unconscious, mortally wounded or dead defender gets no
+ * defense; a defender at 0 HP or less must first stay conscious (p. 29).
  */
 export function attackExchange(
   setup: AttackSetup,
   registry: Registry,
   dice: DiceSource,
 ): AttackOutcome {
-  const attack = resolve(
-    { baseSkill: setup.attackSkill, modifiers: setup.attackModifiers },
-    dice,
-  );
+  // Shock (p. 30): the attacker's DX/IQ rolls take the penalty this turn.
+  const attackModifiers = [...(setup.attackModifiers ?? [])];
+  let shockApplied: number | null = null;
+  if (setup.attacker.shock > 0) {
+    shockApplied = setup.attacker.shock;
+    attackModifiers.push({ label: "shock", value: -setup.attacker.shock });
+    setup.attacker.shock = 0;
+  }
+  const attack = resolve({ baseSkill: setup.attackSkill, modifiers: attackModifiers }, dice);
 
   const defenderAware = setup.defenderAware ?? true;
   const critHit = attack.critical === "success";
-  const mayDefend =
-    attack.success && !critHit && defenderAware && setup.defense !== "none";
+  const defenderDown =
+    setup.defender.condition === "unconscious" ||
+    setup.defender.condition === "mortally-wounded" ||
+    setup.defender.condition === "dead";
 
   let defense: RollResult | null = null;
   let score: number | null = null;
+  let defenderConsciousness: AttackOutcome["defenderConsciousness"] = null;
+  let defenseStunned = false;
+  const mayDefend =
+    attack.success && !critHit && defenderAware && !defenderDown && setup.defense !== "none";
   if (mayDefend) {
-    score = defenseScore(registry, setup.defender.character, setup.defense, setup.defenseContext);
-    if (score !== null) {
-      defense = resolve(
-        {
-          baseSkill: score,
-          modifiers: setup.defenseModifiers,
-          // Book rule, not the house rule: a defense roll of 3 or 4 always
-          // succeeds even at effective defense 1 or 2 (p. 28) — the same
-          // mechanics as "crit-only" mode.
-          lowSkillMode: "crit-only",
-        },
-        dice,
-      );
+    // 0 HP or less (p. 29): attempting a defense roll first takes a HT roll
+    // to stay conscious.
+    if (setup.defender.hp <= 0) {
+      defenderConsciousness = consciousnessCheck(setup.defender, dice);
+    }
+    if (defenderConsciousness === null || defenderConsciousness.stayedConscious) {
+      defenseStunned = setup.defender.condition === "stunned";
+      score = defenseScore(registry, setup.defender.character, setup.defense, {
+        ...setup.defenseContext,
+        reeling: isReeling(hitPoints(setup.defender.character), setup.defender.hp),
+      });
+      if (score !== null) {
+        const defenseModifiers = [...(setup.defenseModifiers ?? [])];
+        if (defenseStunned) defenseModifiers.push({ label: "stunned", value: -4 }); // p. 30
+        defense = resolve(
+          {
+            baseSkill: score,
+            modifiers: defenseModifiers,
+            // Book rule, not the house rule: a defense roll of 3 or 4 always
+            // succeeds even at effective defense 1 or 2 (p. 28) — the same
+            // mechanics as "crit-only" mode.
+            lowSkillMode: "crit-only",
+          },
+          dice,
+        );
+      }
     }
   }
 
@@ -223,22 +272,28 @@ export function attackExchange(
   let basic: number | null = null;
   let penetrating: number | null = null;
   let injury: number | null = null;
+  let injuryEffects: InjuryEffects | null = null;
   if (hit) {
     basic = basicDamage(rollDicePool(setup.damage, dice), setup.damageType, setup.halfDamage);
     const result = injuryFrom(basic, setup.dr ?? 0, setup.damageType);
     penetrating = result.penetrating;
     injury = result.injury;
-    setup.defender.hp -= injury;
+    // HP loss, shock, major wounds and death checks (pp. 29-30).
+    injuryEffects = applyInjury(setup.defender, injury, dice);
   }
 
   return {
     attack,
+    shockApplied,
     defense,
     defenseScoreUsed: score,
+    defenderConsciousness,
+    defenseStunned,
     hit,
     basicDamage: basic,
     penetrating,
     injury,
+    injuryEffects,
     defenderHpAfter: setup.defender.hp,
   };
 }
@@ -250,6 +305,9 @@ export function narrate(
 ): string[] {
   const { attack, defense } = outcome;
   const lines: string[] = [];
+  if (outcome.shockApplied !== null) {
+    lines.push(`${names.attacker} is in shock: -${outcome.shockApplied} to this roll (p. 30).`);
+  }
   const critText =
     attack.critical === "success" ? " Critical hit!" : attack.critical === "failure" ? " Critical failure!" : "";
   lines.push(
@@ -262,15 +320,31 @@ export function narrate(
   }
   if (attack.critical === "success") {
     lines.push(`${names.defender} gets no defense roll against a critical hit (p. 28).`);
+  } else if (outcome.defenderConsciousness !== null && !outcome.defenderConsciousness.stayedConscious) {
+    const c = outcome.defenderConsciousness;
+    const modText = c.modifier === 0 ? "" : ` (${c.modifier} for HP below zero)`;
+    lines.push(
+      `${names.defender}, at 0 HP or less, rolls vs HT${modText} to stay conscious: ` +
+        `rolled ${c.roll.total} — failure by ${c.roll.margin}. ${names.defender} falls unconscious (p. 29).`,
+    );
   } else if (defense === null) {
     lines.push(
       names.defense === "none"
         ? `${names.defender} does not defend.`
-        : `${names.defender} cannot defend (unaware, or the defense is not available).`,
+        : `${names.defender} cannot defend (unaware, down, or the defense is not available).`,
     );
   } else {
+    if (outcome.defenderConsciousness !== null) {
+      const c = outcome.defenderConsciousness;
+      const modText = c.modifier === 0 ? "" : ` (${c.modifier} for HP below zero)`;
+      lines.push(
+        `${names.defender}, at 0 HP or less, rolls vs HT${modText} to stay conscious: ` +
+          `rolled ${c.roll.total} — success by ${c.roll.margin}.`,
+      );
+    }
+    const stunText = outcome.defenseStunned ? " (-4: stunned)" : "";
     lines.push(
-      `${names.defender} defends: ${names.defense} ${outcome.defenseScoreUsed}, ` +
+      `${names.defender} defends: ${names.defense} ${outcome.defenseScoreUsed}${stunText}, ` +
         `rolled ${defense.total} — ${defense.success ? `success by ${defense.margin}` : `failure by ${defense.margin}`}.`,
     );
     if (defense.success) {
@@ -283,6 +357,41 @@ export function narrate(
       (outcome.penetrating !== null ? `; ${outcome.penetrating} penetrates` : "") +
       `; injury ${outcome.injury}. ${names.defender} is at HP ${outcome.defenderHpAfter}.`,
   );
+  lines.push(...narrateInjury(outcome, names.defender));
+  return lines;
+}
+
+/** The pp. 29-30 consequences of a hit: shock, major wounds, death checks. */
+function narrateInjury(outcome: AttackOutcome, defender: string): string[] {
+  const fx = outcome.injuryEffects;
+  if (fx === null || outcome.injury === 0) return [];
+  const lines: string[] = [];
+  if (fx.shockAfter > 0) {
+    lines.push(`${defender} is in shock: -${fx.shockAfter} to DX and IQ on their next turn (p. 30).`);
+  }
+  if (fx.majorWound && fx.knockdownRoll !== null) {
+    const roll = fx.knockdownRoll;
+    if (roll.success) {
+      lines.push(`Major wound! ${defender} rolls vs HT: rolled ${roll.total} — success by ${roll.margin}; keeps fighting (p. 30).`);
+    } else if (fx.conditionAfter === "unconscious") {
+      lines.push(`Major wound! ${defender} rolls vs HT: rolled ${roll.total} — failure by ${roll.margin}. ${defender} is knocked unconscious (p. 30).`);
+    } else {
+      lines.push(`Major wound! ${defender} rolls vs HT: rolled ${roll.total} — failure by ${roll.margin}. ${defender} is stunned and knocked down (p. 30).`);
+    }
+  }
+  for (const check of fx.deathChecks) {
+    const at = `${defender} is at -${check.multiple}xHP and rolls vs HT or die: rolled ${check.roll.total} — `;
+    if (check.outcome === "survived") {
+      lines.push(`${at}success by ${check.roll.margin}. Still fighting (p. 30).`);
+    } else if (check.outcome === "mortal") {
+      lines.push(`${at}failure by ${check.roll.margin}. ${defender} is mortally wounded — incapacitated, and any later failed death roll is fatal (p. 30).`);
+    } else {
+      lines.push(`${at}failure by ${check.roll.margin}. ${defender} dies.`);
+    }
+  }
+  if (fx.diedInstantly) {
+    lines.push(`${defender} has reached -5xHP: death is immediate, no roll (p. 30). ${defender} dies.`);
+  }
   return lines;
 }
 

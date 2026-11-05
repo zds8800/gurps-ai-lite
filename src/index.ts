@@ -68,6 +68,18 @@ export type {
   DefenseChoice,
   DefenseContext,
 } from "./combat/attack.ts";
+export {
+  applyInjury,
+  canAct,
+  consciousnessCheck,
+  deathThresholdsCrossed,
+  isMajorWound,
+  isReeling,
+  reelingDodge,
+  shockPenalty,
+  stunRecovery,
+} from "./combat/injury.ts";
+export type { Condition, DeathCheck, InjuryEffects } from "./combat/injury.ts";
 export { Registry } from "./modules/loader.ts";
 export type { RulesModule } from "./modules/loader.ts";
 export { findSkill, LITE_CORE, LITE_SKILLS } from "./modules/lite-core/index.ts";
