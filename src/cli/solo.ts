@@ -24,7 +24,7 @@ import { resolve } from "../core/success-roll.ts";
 import { quickContest } from "../core/quick-contest.ts";
 import { SeededDice, SystemDice } from "../core/dice.ts";
 import { parseDicePool, formatDicePool } from "../core/dice-pool.ts";
-import { strengthDamage } from "../model/secondary.ts";
+import { strengthDamage, hitPoints } from "../model/secondary.ts";
 import {
   attackExchange,
   bestDefense,
@@ -33,6 +33,7 @@ import {
   narrate,
   turnOrder,
 } from "../combat/attack.ts";
+import { consciousnessCheck, isReeling, stunRecovery } from "../combat/injury.ts";
 import type { Combatant, DamageType, DefenseChoice } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
@@ -115,6 +116,43 @@ function runExchange(
   args: string[],
   defensePolicy: DefensePolicy,
 ): string[] {
+  // Who can act at all (pp. 29-30): the injury gates come before anything else.
+  const attackerName = attacker.character.name;
+  if (attacker.condition === "dead") return [`${attackerName} is dead.`];
+  if (attacker.condition === "unconscious") return [`${attackerName} is unconscious and cannot act (p. 30).`];
+  if (attacker.condition === "mortally-wounded")
+    return [`${attackerName} is mortally wounded and incapacitated (p. 30).`];
+  if (attacker.condition === "stunned") {
+    // Stun (p. 30): the turn is Do Nothing; at its end, a HT roll to
+    // recover. Shock (also p. 30) lasts "on your next turn only", so this
+    // turn spends it.
+    const roll = stunRecovery(attacker, state.dice);
+    attacker.shock = 0;
+    const first = `${attackerName} is stunned and must Do Nothing this turn (p. 30).`;
+    return roll.success
+      ? [first, `At the end of the turn, HT roll: rolled ${roll.total} — success by ${roll.margin}. ${attackerName} shakes off the stun.`]
+      : [first, `At the end of the turn, HT roll: rolled ${roll.total} — failure by ${roll.margin}. ${attackerName} stays stunned.`];
+  }
+  if (defender.condition === "dead") return [`${defender.character.name} is already dead.`];
+
+  // 0 HP or less (p. 29): choosing any maneuver but Do Nothing takes a HT
+  // roll to stay conscious.
+  const prefix: string[] = [];
+  if (attacker.hp <= 0) {
+    const check = consciousnessCheck(attacker, state.dice);
+    const modText = check.modifier === 0 ? "" : ` (${check.modifier} for HP below zero)`;
+    if (!check.stayedConscious) {
+      return [
+        `${attackerName}, at 0 HP or less, rolls vs HT${modText} to stay conscious: ` +
+          `rolled ${check.roll.total} — failure by ${check.roll.margin}. ${attackerName} falls unconscious (p. 29).`,
+      ];
+    }
+    prefix.push(
+      `${attackerName}, at 0 HP or less, rolls vs HT${modText} to stay conscious: ` +
+        `rolled ${check.roll.total} — success by ${check.roll.margin}.`,
+    );
+  }
+
   const skillWords: string[] = [];
   const modTokens: string[] = [];
   let damage: { poolText: string; type: string } | null = null;
@@ -170,15 +208,20 @@ function runExchange(
   }
 
   // The defender's choice: one-off "vs" override, else their standing policy.
+  // A downed defender (unconscious, mortally wounded) gets no defense (p. 30).
+  const defenderDown = defender.condition === "unconscious" || defender.condition === "mortally-wounded";
   const parrySkillId = combatantParrySkill(state, defender);
+  const reeling = isReeling(hitPoints(defender.character), defender.hp);
   let choice: DefenseChoice;
-  if (defenseOverride !== null) {
+  if (defenderDown) {
+    choice = "none";
+  } else if (defenseOverride !== null) {
     if (!["dodge", "block", "parry", "none"].includes(defenseOverride)) {
       return [`Bad defense "${defenseOverride}". Use dodge, block, parry or none (p. 28).`];
     }
     choice = defenseOverride as DefenseChoice;
   } else if (defensePolicy === "best") {
-    const best = bestDefense(state.registry, defender.character, { parrySkillId });
+    const best = bestDefense(state.registry, defender.character, { parrySkillId, reeling });
     if (!best) return [`${defender.character.name} has no active defense available.`];
     choice = best.choice;
   } else {
@@ -186,7 +229,7 @@ function runExchange(
   }
   if (
     choice !== "none" &&
-    defenseScore(state.registry, defender.character, choice, { parrySkillId }) === null
+    defenseScore(state.registry, defender.character, choice, { parrySkillId, reeling }) === null
   ) {
     return [
       `${defender.character.name} cannot ${choice} — ${choice === "block" ? "no usable Shield skill" : "no usable parry skill"} (p. 28). ` +
@@ -208,12 +251,15 @@ function runExchange(
     state.registry,
     state.dice,
   );
-  return narrate(outcome, {
-    attacker: attacker.character.name,
-    defender: defender.character.name,
-    attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
-    defense: choice,
-  });
+  return [
+    ...prefix,
+    ...narrate(outcome, {
+      attacker: attacker.character.name,
+      defender: defender.character.name,
+      attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
+      defense: choice,
+    }),
+  ];
 }
 
 /** Run one command line. Returns the lines to print. */
@@ -581,9 +627,11 @@ export function runCommand(state: SoloState, line: string): string[] {
     case "order": {
       if (!state.combat) return ["No fight yet. Use: foe <path to .gcs file>"];
       const order = turnOrder([state.combat.you, state.combat.foe]);
+      const hp = (c: Combatant) =>
+        `${c.character.name} ${c.hp}` + (c.condition === "ok" ? "" : ` (${c.condition})`);
       return [
         `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
-        `HP: ${state.combat.you.character.name} ${state.combat.you.hp}, ${state.combat.foe.character.name} ${state.combat.foe.hp}.`,
+        `HP: ${hp(state.combat.you)}, ${hp(state.combat.foe)}.`,
         `Defenses: ${state.combat.you.character.name} ${state.combat.youDefense}, ${state.combat.foe.character.name} ${state.combat.foeDefense}.`,
       ];
     }
@@ -612,6 +660,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       if (policy === "dodge" || policy === "block" || policy === "parry") {
         const score = defenseScore(state.registry, combatant.character, policy, {
           parrySkillId: combatantParrySkill(state, combatant),
+          reeling: isReeling(hitPoints(combatant.character), combatant.hp),
         });
         if (score === null) {
           return [
@@ -643,7 +692,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  foe <path>            Load an opponent from a .gcs file and start a fight.",
         "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
-        "  order                 Show turn order, current HP and defense choices.",
+        "  order                 Show turn order, current HP, conditions and defense choices.",
         "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
         "  foeattack <skill> [dmg ...] [mods]  Your foe attacks you.",
         "  defend / foedefend <dodge|block|parry|none|best>  Set a side's standing defense.",

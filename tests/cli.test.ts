@@ -199,6 +199,7 @@ test("fight starts the demo combat in one word, and restarts it fresh", () => {
 
 test("a chosen defense that does not exist is refused, not silently swapped", () => {
   const out = session([
+    "seed 5", // the foe's swing connects and Bookish's dodge fails
     "load tests/fixtures/bookish.gcs", // no trained combat skill
     "foe tests/fixtures/edge-case.gcs",
     "defend parry", // refused: parry needs a trained combat skill
@@ -208,6 +209,40 @@ test("a chosen defense that does not exist is refused, not silently swapped", ()
   assert.ok(out.some((l) => l === "Bookish cannot parry — no usable parry skill (p. 28)."));
   assert.ok(out.some((l) => l === "Bookish will dodge (dodge 8) until you change it."));
   assert.ok(out.some((l) => /^Bookish defends: dodge 8/.test(l)));
+});
+
+test("a major wound stuns the foe; their next turn is Do Nothing with a recovery roll", () => {
+  const out = session([
+    "seed 6",
+    "load tests/fixtures/mara-voss.gcs",
+    "foe tests/fixtures/edge-case.gcs",
+    "attack brawling dmg 5d cut vs none",
+    "foeattack brawling",
+    "order",
+  ]);
+  assert.ok(
+    out.some((l) =>
+      /^Major wound! Edge Case rolls vs HT: rolled 11 — failure by 1\. Edge Case is stunned and knocked down/.test(l),
+    ),
+  );
+  assert.ok(out.some((l) => l === "Edge Case is in shock: -4 to DX and IQ on their next turn (p. 30)."));
+  assert.ok(out.some((l) => l === "Edge Case is stunned and must Do Nothing this turn (p. 30)."));
+  assert.ok(out.some((l) => /Edge Case stays stunned\.$/.test(l)));
+  assert.ok(out.some((l) => l === "HP: Mara Voss 10, Edge Case -7 (stunned)."));
+});
+
+test("a failed death check kills; the dead cannot act", () => {
+  const out = session([
+    "seed 5",
+    "load tests/fixtures/mara-voss.gcs",
+    "foe tests/fixtures/edge-case.gcs",
+    "attack brawling dmg 5d cut vs none",
+    "foeattack brawling",
+  ]);
+  assert.ok(
+    out.some((l) => /rolls vs HT or die: rolled 15 — failure by 5\. Edge Case dies\.$/.test(l)),
+  );
+  assert.ok(out.some((l) => l === "Edge Case is dead."));
 });
 
 test("an imported sheet with unprinted point totals explains instead of crashing", () => {

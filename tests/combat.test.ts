@@ -163,6 +163,9 @@ function exchange(opts: {
   const rolls = [opts.attackTotal];
   if (opts.defenseTotal !== undefined) rolls.push(opts.defenseTotal);
   if (opts.damageDice) rolls.push(...opts.damageDice);
+  // Injury effects (pp. 29-30): big scripted wounds now trigger major-wound
+  // and death-check HT rolls; pad the stream with clear successes (HT 10).
+  rolls.push(8, 8, 8, 8);
   const outcome = attackExchange(
     {
       attacker,
