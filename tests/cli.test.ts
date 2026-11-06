@@ -289,7 +289,8 @@ test("a spent parry falls back to a legal defense with the reason said aloud (p.
   assert.ok(
     out.some((l) => l === "Mara Voss cannot parry — already parried this turn (pp. 28-29) — and dodges instead."),
   );
-  assert.ok(out.some((l) => /^Mara Voss defends: dodge 8 \(-4: stunned\)/.test(l)));
+  // The major wound also knocked Mara down: lying gives -3 to active defense (p. 25).
+  assert.ok(out.some((l) => /^Mara Voss defends: dodge 5 \(-4: stunned\)/.test(l)));
 });
 
 test("an imported sheet with unprinted point totals explains instead of crashing", () => {  const out = session(["load tests/fixtures/edge-case.gcs", "sheet", "test stealth"]);

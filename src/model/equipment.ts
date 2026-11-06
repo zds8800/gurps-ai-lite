@@ -331,6 +331,25 @@ export const RANGED_WEAPON_TABLE: readonly RangedWeapon[] = [
 
 // ---- Lookup helpers ----
 
+/**
+ * The Shots column (pp. 19-20): "8+1(3)" is 9 shots and 3 one-second Ready
+ * maneuvers to reload them all; "2(3i)" loads individually — 3 seconds per
+ * shot; "T(1)" is a thrown weapon: ready another in 1 second.
+ */
+export interface ShotsInfo {
+  count: number;
+  reloadSeconds: number;
+  perShot: boolean;
+  thrown: boolean;
+}
+
+export function parseShots(shots: string): ShotsInfo | null {
+  const m = /^(\d+(?:\+\d+)?|T)\((\d+)(i?)\)$/.exec(shots);
+  if (!m) return null;
+  const count = m[1] === "T" ? 1 : m[1].split("+").reduce((s, n) => s + Number(n), 0);
+  return { count, reloadSeconds: Number(m[2]), perShot: m[3] === "i", thrown: m[1] === "T" };
+}
+
 function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
