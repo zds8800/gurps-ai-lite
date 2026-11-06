@@ -40,9 +40,10 @@ export function baseSkillLevel(
   skill: SkillDef,
   mode: InvalidPointsMode = "error",
 ): number | null {
-  const record = character.skills.find(
-    (r) => r.skillId === skill.id && r.specialization === null,
-  );
+  // Match on skillId alone: the importer resolves a family skill's record to
+  // the specialty-specific definition (e.g. "Thrown Weapon: Knife"), so the
+  // record's specialization is display text, not part of the match (issue #36).
+  const record = character.skills.find((r) => r.skillId === skill.id);
   if (record && record.points > 0) {
     const relative = pointsToRelativeLevel(record.points, skill.difficulty, mode);
     return character.attributes[skill.attribute] + relative + (record.bonus ?? 0);

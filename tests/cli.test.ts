@@ -297,6 +297,16 @@ test("an imported sheet with unprinted point totals explains instead of crashing
   assert.ok(testLine.startsWith("3 points is not a purchasable cost"), testLine);
 });
 
+test("an imported family skill with a specialty counts its points (issue #36)", () => {
+  // Mara's "Thrown Weapon" + specialty "Knife" resolves to Thrown Weapon:
+  // Knife (DX/E) at 2 points = DX+1 = 12 — not the DX-4 default.
+  const out = session(["load tests/fixtures/mara-voss.gcs", "sheet"]);
+  assert.ok(
+    out.some((l) => l === "  Thrown Weapon: Knife (DX/E) 2 points: level 12"),
+    out.join("\n"),
+  );
+});
+
 test("the CLI runs as a process with piped commands", () => {
   const soloPath = fileURLToPath(new URL("../src/cli/solo.ts", import.meta.url));
   const output = execFileSync(
