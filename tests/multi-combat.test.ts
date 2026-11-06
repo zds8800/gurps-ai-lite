@@ -80,7 +80,7 @@ test("maneuver restrictions are per fighter: one all-out attacker, the other sti
 
 test("the foe… shorthands say to use npc when several fighters are in play", () => {
   const out = session([...threeWay(), "foeattack brawling"]);
-  assert.deepEqual(out.at(-1), "Several fighters are in play — name one: npc <name> <attack|shoot|allout|moveattack|defend|alloutdefense|donothing> ...");
+  assert.deepEqual(out.at(-1), "Several fighters are in play — name one: npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> ...");
 });
 
 test("a fighter whose name is taken is refused", () => {
