@@ -5,6 +5,7 @@
 
 import type { Modifier } from "../core/types.ts";
 import type { SkillRecord } from "./skill.ts";
+import { WEALTH_LEVELS } from "./equipment.ts";
 
 export type AttributeId = "ST" | "DX" | "IQ" | "HT";
 
@@ -37,6 +38,13 @@ export function derivedTraits(attributes: Record<AttributeId, number>): { Will: 
   return { Will: attributes.IQ, Per: attributes.IQ };
 }
 
+/** A piece of owned gear, named as printed in the Lite tables (pp. 18-22). */
+export interface EquipmentItem {
+  name: string;
+  /** Crossbows have their own ST for range and damage (p. 20); set at purchase. */
+  st?: number;
+}
+
 /** A character: the four basic attribute levels, skill records, standing modifiers. */
 export interface Character {
   id: string;
@@ -46,6 +54,18 @@ export interface Character {
   skills: SkillRecord[];
   /** Standing modifiers, such as the off-hand -4 (pp. 5-6). */
   modifiers: Modifier[];
+  /** Wealth level (p. 8); the CLI prices purchases against it. Default average. */
+  wealthLevel?: string;
+  /** Money on hand in $ (starting wealth by TL, p. 18, times the level's multiplier). */
+  money?: number;
+  /** Owned gear (pp. 18-22). */
+  equipment?: EquipmentItem[];
+  /** Worn armor: its DR reduces penetrating damage (p. 29). */
+  wornArmor?: string;
+  /** Ready weapons and shield: combat draws their table stats (pp. 19-22, 28). */
+  readyMelee?: string;
+  readyRanged?: string;
+  readyShield?: string;
 }
 
 /** New character at 10 in everything (the CLI's `new <name>`). */
@@ -59,7 +79,7 @@ export function makeCharacter(id: string, name: string): Character {
   };
 }
 
-/** Total character points: attribute costs plus skill points (pp. 4, 13, 17). */
+/** Total character points: attribute costs, skill points, and the Wealth level's points (pp. 4, 8, 13, 17). */
 export function pointTotal(character: Character): number {
   let total = 0;
   for (const def of ATTRIBUTE_DEFS) {
@@ -67,6 +87,11 @@ export function pointTotal(character: Character): number {
   }
   for (const record of character.skills) {
     total += record.points;
+  }
+  if (character.wealthLevel) {
+    const level = WEALTH_LEVELS[character.wealthLevel];
+    if (!level) throw new Error(`Unknown wealth level "${character.wealthLevel}".`);
+    total += level.points;
   }
   return total;
 }

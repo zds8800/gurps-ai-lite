@@ -100,10 +100,10 @@ test("npc fighters can aim and get the bonus on their shot", () => {
   assert.ok(out.some((l) => l.includes("Edge Case aim")), out.join("\n"));
 });
 
-test("aim needs its Acc; bad input is refused plainly", () => {
+test("aim needs its Acc or a readied weapon; bad input is refused plainly", () => {
   const out = session(["fight", "aim edge", "aim edge acc 0"]);
   assert.deepEqual(out.slice(-2), [
-    "Usage: aim [<target>] acc <n> [braced]  (Aim, pp. 25-26)",
+    "No Acc given and Mara Voss has no ranged weapon readied. Ready one (ready <weapon>) or give the Acc: aim [<target>] acc <n> [braced].",
     'Bad Acc "0". Accuracy is a whole number, 1 or more.',
   ]);
 });
