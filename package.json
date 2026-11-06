@@ -8,7 +8,7 @@
     "node": ">=22.6.0"
   },
   "scripts": {
-    "test": "node --test tests/success-roll.test.ts tests/grid.test.ts tests/seeded-dice.test.ts tests/skill-model.test.ts tests/registry.test.ts tests/cli.test.ts tests/quick-contest.test.ts tests/gcs.test.ts tests/combat.test.ts tests/combat-injury.test.ts tests/no-network.test.ts",
+    "test": "node --test tests/success-roll.test.ts tests/grid.test.ts tests/seeded-dice.test.ts tests/skill-model.test.ts tests/registry.test.ts tests/cli.test.ts tests/quick-contest.test.ts tests/gcs.test.ts tests/combat.test.ts tests/combat-injury.test.ts tests/maneuvers.test.ts tests/no-network.test.ts",
     "bench": "node tests/benchmark.ts",
     "play": "node src/cli/solo.ts"
   }

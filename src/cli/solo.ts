@@ -30,11 +30,12 @@ import {
   bestDefense,
   defenseScore,
   makeCombatant,
+  maneuverName,
   narrate,
   turnOrder,
 } from "../combat/attack.ts";
 import { consciousnessCheck, isReeling, stunRecovery } from "../combat/injury.ts";
-import type { Combatant, DamageType, DefenseChoice } from "../combat/attack.ts";
+import type { Combatant, DamageType, DefenseChoice, Maneuver } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
 
@@ -103,6 +104,54 @@ function combatantParrySkill(state: SoloState, combatant: Combatant): string | u
   })?.skillId;
 }
 
+/** The pp. 29-30 gates on taking any turn; returns the refusal lines, or null if they may act. */
+function actionGates(state: SoloState, combatant: Combatant): string[] | null {
+  const name = combatant.character.name;
+  if (combatant.condition === "dead") return [`${name} is dead.`];
+  if (combatant.condition === "unconscious") return [`${name} is unconscious and cannot act (p. 30).`];
+  if (combatant.condition === "mortally-wounded")
+    return [`${name} is mortally wounded and incapacitated (p. 30).`];
+  if (combatant.condition === "stunned") return stunnedTurn(state, combatant);
+  return null;
+}
+
+/**
+ * Taking a turn (p. 25): the maneuver is set and stays in effect until the
+ * combatant's next turn; the once-per-turn Block and Parry counts (p. 28)
+ * reset.
+ */
+function takeTurn(combatant: Combatant, maneuver: Maneuver): void {
+  combatant.maneuver = maneuver;
+  combatant.blocksUsed = 0;
+  combatant.parriesUsed = 0;
+}
+
+/** A stunned combatant's forced Do Nothing turn (p. 30), with the recovery roll. */
+function stunnedTurn(state: SoloState, combatant: Combatant): string[] {
+  takeTurn(combatant, { kind: "do-nothing" });
+  // Shock (p. 30) lasts "on your next turn only", so this turn spends it.
+  combatant.shock = 0;
+  const roll = stunRecovery(combatant, state.dice);
+  const name = combatant.character.name;
+  const first = `${name} is stunned and must Do Nothing this turn (p. 30).`;
+  return roll.success
+    ? [first, `At the end of the turn, HT roll: rolled ${roll.total} — success by ${roll.margin}. ${name} shakes off the stun.`]
+    : [first, `At the end of the turn, HT roll: rolled ${roll.total} — failure by ${roll.margin}. ${name} stays stunned.`];
+}
+
+/** How an attack command's maneuver shapes the exchange (p. 25). */
+interface ExchangeOptions {
+  maneuver: Maneuver;
+  /** Flat attack modifier from the maneuver: +4 Determined, -4 Move and Attack. */
+  bonus?: { label: string; value: number };
+  /** All-Out Attack (Strong): +2 damage, or +1 per die if better (p. 25). */
+  strong?: boolean;
+  /** All-Out Attack (Double): two attacks against the same foe (p. 25). */
+  double?: boolean;
+  /** Move and Attack: melee adjusted skill cannot exceed 9 (p. 25). */
+  capMelee9?: boolean;
+}
+
 /**
  * One attack exchange, either direction (issue #21): `attack` is you against
  * the foe, `foeattack` is the foe against you. The defender's policy (set by
@@ -115,6 +164,7 @@ function runExchange(
   defender: Combatant,
   args: string[],
   defensePolicy: DefensePolicy,
+  opts: ExchangeOptions,
 ): string[] {
   // Who can act at all (pp. 29-30): the injury gates come before anything else.
   const attackerName = attacker.character.name;
@@ -122,17 +172,7 @@ function runExchange(
   if (attacker.condition === "unconscious") return [`${attackerName} is unconscious and cannot act (p. 30).`];
   if (attacker.condition === "mortally-wounded")
     return [`${attackerName} is mortally wounded and incapacitated (p. 30).`];
-  if (attacker.condition === "stunned") {
-    // Stun (p. 30): the turn is Do Nothing; at its end, a HT roll to
-    // recover. Shock (also p. 30) lasts "on your next turn only", so this
-    // turn spends it.
-    const roll = stunRecovery(attacker, state.dice);
-    attacker.shock = 0;
-    const first = `${attackerName} is stunned and must Do Nothing this turn (p. 30).`;
-    return roll.success
-      ? [first, `At the end of the turn, HT roll: rolled ${roll.total} — success by ${roll.margin}. ${attackerName} shakes off the stun.`]
-      : [first, `At the end of the turn, HT roll: rolled ${roll.total} — failure by ${roll.margin}. ${attackerName} stays stunned.`];
-  }
+  if (attacker.condition === "stunned") return stunnedTurn(state, attacker);
   if (defender.condition === "dead") return [`${defender.character.name} is already dead.`];
 
   // 0 HP or less (p. 29): choosing any maneuver but Do Nothing takes a HT
@@ -237,29 +277,56 @@ function runExchange(
     ];
   }
 
-  const outcome = attackExchange(
-    {
-      attacker,
-      attackSkill: base,
-      attackModifiers: mods,
-      damage: pool,
-      damageType: type,
-      defender,
-      defense: choice,
-      defenseContext: { parrySkillId },
-    },
-    state.registry,
-    state.dice,
-  );
-  return [
-    ...prefix,
-    ...narrate(outcome, {
-      attacker: attacker.character.name,
-      defender: defender.character.name,
-      attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
-      defense: choice,
-    }),
-  ];
+  // Maneuver effects on the attack (p. 25): flat bonuses, the Strong damage
+  // boost, and the Move and Attack cap of 9 on adjusted melee skill.
+  const maneuverMods: Modifier[] = [...mods];
+  if (opts.bonus) maneuverMods.push(opts.bonus);
+  const modSum = maneuverMods.reduce((s, m) => s + m.value, 0);
+  if (opts.capMelee9) {
+    // "Your adjusted skill cannot exceed 9." Shock (engine-side) also counts,
+    // so cap the base such that base + mods - shock <= 9.
+    base = Math.min(base, 9 - modSum + attacker.shock);
+  }
+  const effectivePreview = base + modSum - attacker.shock;
+  if (effectivePreview < 3) {
+    return [`Effective skill ${effectivePreview} is below 3. You may not attempt this roll (p. 2).`];
+  }
+  if (opts.strong) {
+    // +2 damage, or +1 per die if that would be better (melee, ST-based, p. 25).
+    pool = { ...pool, adds: pool.adds + Math.max(2, pool.dice) };
+  }
+
+  // The turn is taken now that the exchange is real: maneuver set, the
+  // once-per-turn Block and Parry counts reset (pp. 25, 28).
+  takeTurn(attacker, opts.maneuver);
+
+  const runOnce = () =>
+    attackExchange(
+      {
+        attacker,
+        attackSkill: base,
+        attackModifiers: maneuverMods,
+        damage: pool,
+        damageType: type,
+        defender,
+        defense: choice,
+        defenseContext: { parrySkillId },
+      },
+      state.registry,
+      state.dice,
+    );
+  const names = {
+    attacker: attacker.character.name,
+    defender: defender.character.name,
+    attackLabel: `${displayName(found)} (${formatDicePool(pool)} ${type})`,
+    defense: choice,
+  };
+  const lines = [...prefix, ...narrate(runOnce(), names)];
+  if (opts.double) {
+    lines.push("Second attack (All-Out Attack: double, p. 25):");
+    lines.push(...narrate(runOnce(), names));
+  }
+  return lines;
 }
 
 /** Run one command line. Returns the lines to print. */
@@ -633,17 +700,99 @@ export function runCommand(state: SoloState, line: string): string[] {
         `Turn order by Basic Speed (p. 24): ${order.map((c) => c.character.name).join(", ")}.`,
         `HP: ${hp(state.combat.you)}, ${hp(state.combat.foe)}.`,
         `Defenses: ${state.combat.you.character.name} ${state.combat.youDefense}, ${state.combat.foe.character.name} ${state.combat.foeDefense}.`,
+        `Maneuvers: ${state.combat.you.character.name} ${maneuverName(state.combat.you.maneuver)}, ${state.combat.foe.character.name} ${maneuverName(state.combat.foe.maneuver)}.`,
       ];
     }
 
-    case "attack": {
-      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      return runExchange(state, state.combat.you, state.combat.foe, args, state.combat.foeDefense);
-    }
-
+    case "attack":
     case "foeattack": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
-      return runExchange(state, state.combat.foe, state.combat.you, args, state.combat.youDefense);
+      const [attacker, defender, policy] =
+        cmd === "attack"
+          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
+          : [state.combat.foe, state.combat.you, state.combat.youDefense];
+      return runExchange(state, attacker, defender, args, policy, { maneuver: { kind: "attack" } });
+    }
+
+    case "allout":
+    case "foeallout": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const option = (args[0] ?? "").toLowerCase();
+      if (!["determined", "double", "strong"].includes(option)) {
+        return [`Usage: ${cmd} <determined|double|strong> <skill> [dmg 2d+1 cut] [vs ...] [mods]  (All-Out Attack, p. 25)`];
+      }
+      const [attacker, defender, policy] =
+        cmd === "allout"
+          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
+          : [state.combat.foe, state.combat.you, state.combat.youDefense];
+      return runExchange(state, attacker, defender, args.slice(1), policy, {
+        maneuver: { kind: "all-out-attack", option: option as "determined" | "double" | "strong" },
+        bonus: option === "determined" ? { label: "all-out attack (determined)", value: 4 } : undefined,
+        strong: option === "strong",
+        double: option === "double",
+      });
+    }
+
+    case "moveattack":
+    case "foemoveattack": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const [attacker, defender, policy] =
+        cmd === "moveattack"
+          ? [state.combat.you, state.combat.foe, state.combat.foeDefense]
+          : [state.combat.foe, state.combat.you, state.combat.youDefense];
+      return runExchange(state, attacker, defender, args, policy, {
+        maneuver: { kind: "move-and-attack" },
+        bonus: { label: "move and attack", value: -4 },
+        capMelee9: true,
+      });
+    }
+
+    case "alloutdefense":
+    case "foealloutdefense": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const side = cmd === "alloutdefense" ? "you" : "foe";
+      const combatant = state.combat[side];
+      const name = combatant.character.name;
+      const gates = actionGates(state, combatant);
+      if (gates) return gates;
+      const sub = (args[0] ?? "").toLowerCase();
+      if (sub === "double") {
+        takeTurn(combatant, { kind: "all-out-defense", option: "double" });
+        return [
+          `${name} takes All-Out Defense (double): if a defense fails, a second, different one follows (p. 25). ` +
+            `This lasts until their next turn.`,
+        ];
+      }
+      if (sub === "increased") {
+        const which = (args[1] ?? "").toLowerCase();
+        if (!["dodge", "block", "parry"].includes(which)) {
+          return [`Usage: ${cmd} increased <dodge|block|parry>  (All-Out Defense, p. 25)`];
+        }
+        const parrySkillId = combatantParrySkill(state, combatant);
+        const score = defenseScore(state.registry, combatant.character, which as DefenseChoice, {
+          parrySkillId,
+          reeling: isReeling(hitPoints(combatant.character), combatant.hp),
+        });
+        if (score === null) {
+          return [`${name} cannot ${which} — no usable defense there (p. 28).`];
+        }
+        takeTurn(combatant, { kind: "all-out-defense", option: "increased", defense: which as "dodge" | "block" | "parry" });
+        return [`${name} takes All-Out Defense: +2 to ${which} (${which} ${score + 2}) until their next turn (p. 25).`];
+      }
+      return [`Usage: ${cmd} <increased dodge|block|parry | double>  (All-Out Defense, p. 25)`];
+    }
+
+    case "donothing":
+    case "foedonothing": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      const side = cmd === "donothing" ? "you" : "foe";
+      const combatant = state.combat[side];
+      const gates = actionGates(state, combatant);
+      if (gates) return gates;
+      // Do Nothing (p. 25): no roll to stay conscious even at 0 HP or less,
+      // per the p. 29 exception.
+      takeTurn(combatant, { kind: "do-nothing" });
+      return [`${combatant.character.name} does nothing this turn.`];
     }
 
     case "defend":
@@ -694,7 +843,11 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
         "  order                 Show turn order, current HP, conditions and defense choices.",
         "  attack <skill> [dmg 2d+1 cut] [vs dodge|block|parry|none] [mods]  Attack your foe.",
-        "  foeattack <skill> [dmg ...] [mods]  Your foe attacks you.",
+        "  allout <determined|double|strong> <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
+        "  moveattack <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
+        "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
+        "  donothing             Do Nothing this turn (p. 25).",
+        "  foeattack / foeallout / foemoveattack / foealloutdefense / foedonothing  The same, for your foe.",
         "  defend / foedefend <dodge|block|parry|none|best>  Set a side's standing defense.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",

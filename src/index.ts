@@ -55,9 +55,12 @@ export {
   attackExchange,
   basicDamage,
   bestDefense,
+  bestLegalDefense,
+  defenseBlocked,
   defenseScore,
   injuryFrom,
   makeCombatant,
+  maneuverName,
   turnOrder,
 } from "./combat/attack.ts";
 export type {
@@ -67,6 +70,7 @@ export type {
   DamageType,
   DefenseChoice,
   DefenseContext,
+  Maneuver,
 } from "./combat/attack.ts";
 export {
   applyInjury,

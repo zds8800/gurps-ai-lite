@@ -35,10 +35,48 @@ export interface Combatant {
   shock: number;
   /** Injury state ladder (pp. 29-30). Anything past "stunned" cannot act. */
   condition: Condition;
+  /**
+   * The maneuver chosen on their last turn (p. 25); it stays in effect until
+   * their next turn and shapes the defenses available to them (p. 29 table).
+   * A combatant who has not yet taken a turn is treated as Do Nothing (p. 25).
+   */
+  maneuver: Maneuver;
+  /** Block and Parry are each usable once per turn (p. 28); reset on their turn. */
+  blocksUsed: number;
+  parriesUsed: number;
 }
 
 export function makeCombatant(character: Character): Combatant {
-  return { character, hp: hitPoints(character), shock: 0, condition: "ok" };
+  return {
+    character,
+    hp: hitPoints(character),
+    shock: 0,
+    condition: "ok",
+    maneuver: { kind: "do-nothing" },
+    blocksUsed: 0,
+    parriesUsed: 0,
+  };
+}
+
+/** The p. 25 maneuvers the engine and CLI can express. */
+export type Maneuver =
+  | { kind: "do-nothing" }
+  | { kind: "attack" }
+  | { kind: "all-out-attack"; option: "determined" | "double" | "strong" }
+  | { kind: "all-out-defense"; option: "increased"; defense: "dodge" | "block" | "parry" }
+  | { kind: "all-out-defense"; option: "double" }
+  | { kind: "move-and-attack" };
+
+/** One line for "order" and narration: "all-out attack (strong)". */
+export function maneuverName(m: Maneuver): string {
+  switch (m.kind) {
+    case "do-nothing": return "do nothing";
+    case "attack": return "attack";
+    case "move-and-attack": return "move and attack";
+    case "all-out-attack": return `all-out attack (${m.option})`;
+    case "all-out-defense":
+      return m.option === "increased" ? `all-out defense (+2 ${m.defense})` : "all-out defense (double)";
+  }
 }
 
 /**
@@ -136,6 +174,54 @@ export function bestDefense(
 }
 
 /**
+ * Why a defense is not available to this combatant right now, or null if it
+ * is (pp. 25, 28, 29): downed or All-Out Attack means no defense at all;
+ * Move and Attack forbids parry; Block and Parry are each once per turn;
+ * Dodge is unlimited. Skill availability (no Shield skill, no parry skill)
+ * is separate — that is defenseScore returning null.
+ */
+export function defenseBlocked(defender: Combatant, choice: Exclude<DefenseChoice, "none">): string | null {
+  if (
+    defender.condition === "unconscious" ||
+    defender.condition === "mortally-wounded" ||
+    defender.condition === "dead"
+  ) {
+    return null; // handled by the exchange as "no defense", not a choice problem
+  }
+  if (defender.maneuver.kind === "all-out-attack") return "all-out attack — no defense possible";
+  if (choice === "parry" && defender.maneuver.kind === "move-and-attack")
+    return "cannot parry after Move and Attack";
+  if (choice === "block" && defender.blocksUsed >= 1) return "already blocked this turn";
+  if (choice === "parry" && defender.parriesUsed >= 1) return "already parried this turn";
+  return null;
+}
+
+/**
+ * The best defense the defender can legally take right now: scores from
+ * defenseScore, filtered by defenseBlocked. An All-Out Defense (Increased)
+ * bonus counts toward "best" (p. 25).
+ */
+export function bestLegalDefense(
+  registry: Registry,
+  defender: Combatant,
+  context: DefenseContext = {},
+): { choice: "dodge" | "block" | "parry"; score: number } | null {
+  const increased =
+    defender.maneuver.kind === "all-out-defense" && defender.maneuver.option === "increased"
+      ? defender.maneuver.defense
+      : null;
+  let best: { choice: "dodge" | "block" | "parry"; score: number } | null = null;
+  for (const choice of ["dodge", "block", "parry"] as const) {
+    if (defenseBlocked(defender, choice) !== null) continue;
+    const score = defenseScore(registry, defender.character, choice, context);
+    if (score === null) continue;
+    const total = score + (choice === increased ? 2 : 0);
+    if (best === null || total > best.score) best = { choice, score: total };
+  }
+  return best;
+}
+
+/**
  * Basic damage after the roll minimums (p. 29): a negative modifier can't
  * take damage below 0 for crushing, below 1 for any other type. A ranged
  * attack at or past 1/2D range halves, rounding down.
@@ -193,9 +279,19 @@ export interface AttackOutcome {
   defenderConsciousness: { roll: RollResult; modifier: number; stayedConscious: boolean } | null;
   /** True when the defense rolled at -4 for stun (p. 30). */
   defenseStunned: boolean;
+  /** True when the defense rolled at +2 for All-Out Defense (Increased) (p. 25). */
+  defenseIncreased: boolean;
+  /** The defense actually used, after any legality fallback (pp. 28-29). */
+  defenseChoiceUsed: DefenseChoice;
+  /** Why the requested defense was not legal and another was used; null if none. */
+  defenseFallback: string | null;
+  /** The second defense roll of All-Out Defense (Double) (p. 25), if any. */
+  defense2: { choice: DefenseChoice; score: number; roll: RollResult } | null;
   hit: boolean;
   /** Basic damage rolled, after minimums and any 1/2D halving; null on a miss. */
   basicDamage: number | null;
+  /** True when a roll of 3 dealt maximum damage with no damage roll (p. 27). */
+  maxDamageCrit: boolean;
   penetrating: number | null;
   injury: number | null;
   /** Shock, major-wound and death-check results of the hit (pp. 29-30); null on a miss. */
@@ -207,8 +303,12 @@ export interface AttackOutcome {
  * Resolve one attack: the attack roll, the defense roll if any, and damage.
  * On a hit the defender's HP drops and the injury effects of pp. 29-30 play
  * out (the Combatant is mutated). A critical hit skips the defense roll
- * (p. 28). An unconscious, mortally wounded or dead defender gets no
- * defense; a defender at 0 HP or less must first stay conscious (p. 29).
+ * (p. 28), and a roll of 3 does maximum damage with no damage roll (p. 27).
+ * An unconscious, mortally wounded or dead defender — or one who chose
+ * All-Out Attack — gets no defense (p. 29); a defender at 0 HP or less must
+ * first stay conscious (p. 29). Block and Parry are once per turn each
+ * (p. 28); if the requested defense is spent or forbidden, the defender
+ * falls back to their best legal defense and the outcome says why.
  */
 export function attackExchange(
   setup: AttackSetup,
@@ -225,34 +325,64 @@ export function attackExchange(
   }
   const attack = resolve({ baseSkill: setup.attackSkill, modifiers: attackModifiers }, dice);
 
+  const defender = setup.defender;
   const defenderAware = setup.defenderAware ?? true;
   const critHit = attack.critical === "success";
   const defenderDown =
-    setup.defender.condition === "unconscious" ||
-    setup.defender.condition === "mortally-wounded" ||
-    setup.defender.condition === "dead";
+    defender.condition === "unconscious" ||
+    defender.condition === "mortally-wounded" ||
+    defender.condition === "dead";
+  const noDefenseByManeuver = defender.maneuver.kind === "all-out-attack";
 
   let defense: RollResult | null = null;
   let score: number | null = null;
   let defenderConsciousness: AttackOutcome["defenderConsciousness"] = null;
   let defenseStunned = false;
+  let defenseIncreased = false;
+  let defenseFallback: string | null = null;
+  let defense2: AttackOutcome["defense2"] = null;
+  let choice: DefenseChoice = setup.defense;
+
   const mayDefend =
-    attack.success && !critHit && defenderAware && !defenderDown && setup.defense !== "none";
+    attack.success && !critHit && defenderAware && !defenderDown && !noDefenseByManeuver && choice !== "none";
+  if (
+    attack.success && !critHit && defenderAware && !defenderDown && noDefenseByManeuver && choice !== "none"
+  ) {
+    defenseFallback = "all-out attack — no defense possible";
+  }
   if (mayDefend) {
+    // Legality of the requested defense (pp. 28-29); fall back if needed.
+    const blocked = defenseBlocked(defender, choice as Exclude<DefenseChoice, "none">);
+    if (blocked !== null) {
+      defenseFallback = blocked;
+      const alt = bestLegalDefense(registry, defender, {
+        ...setup.defenseContext,
+        reeling: isReeling(hitPoints(defender.character), defender.hp),
+      });
+      choice = alt === null ? "none" : alt.choice;
+    }
+  }
+  const defending = mayDefend && choice !== "none";
+  if (defending) {
     // 0 HP or less (p. 29): attempting a defense roll first takes a HT roll
     // to stay conscious.
-    if (setup.defender.hp <= 0) {
-      defenderConsciousness = consciousnessCheck(setup.defender, dice);
+    if (defender.hp <= 0) {
+      defenderConsciousness = consciousnessCheck(defender, dice);
     }
     if (defenderConsciousness === null || defenderConsciousness.stayedConscious) {
-      defenseStunned = setup.defender.condition === "stunned";
-      score = defenseScore(registry, setup.defender.character, setup.defense, {
+      defenseStunned = defender.condition === "stunned";
+      defenseIncreased =
+        defender.maneuver.kind === "all-out-defense" &&
+        defender.maneuver.option === "increased" &&
+        defender.maneuver.defense === choice;
+      score = defenseScore(registry, defender.character, choice, {
         ...setup.defenseContext,
-        reeling: isReeling(hitPoints(setup.defender.character), setup.defender.hp),
+        reeling: isReeling(hitPoints(defender.character), defender.hp),
       });
       if (score !== null) {
         const defenseModifiers = [...(setup.defenseModifiers ?? [])];
         if (defenseStunned) defenseModifiers.push({ label: "stunned", value: -4 }); // p. 30
+        if (defenseIncreased) defenseModifiers.push({ label: "all-out defense", value: 2 }); // p. 25
         defense = resolve(
           {
             baseSkill: score,
@@ -264,22 +394,63 @@ export function attackExchange(
           },
           dice,
         );
+        // Each Block or Parry is once per turn (p. 28).
+        if (choice === "block") defender.blocksUsed += 1;
+        if (choice === "parry") defender.parriesUsed += 1;
+
+        // All-Out Defense (Double) (p. 25): a failed first defense allows a
+        // second, different one — the best legal defense that is not the
+        // one that just failed.
+        if (
+          !defense.success &&
+          defender.maneuver.kind === "all-out-defense" &&
+          defender.maneuver.option === "double"
+        ) {
+          let alt: { choice: "dodge" | "block" | "parry"; score: number } | null = null;
+          for (const other of ["dodge", "block", "parry"] as const) {
+            if (other === choice || defenseBlocked(defender, other) !== null) continue;
+            const score2 = defenseScore(registry, defender.character, other, {
+              ...setup.defenseContext,
+              reeling: isReeling(hitPoints(defender.character), defender.hp),
+            });
+            if (score2 !== null && (alt === null || score2 > alt.score)) alt = { choice: other, score: score2 };
+          }
+          if (alt !== null) {
+            const mods2: Modifier[] = [];
+            if (defenseStunned) mods2.push({ label: "stunned", value: -4 });
+            const roll2 = resolve(
+              { baseSkill: alt.score, modifiers: mods2, lowSkillMode: "crit-only" },
+              dice,
+            );
+            if (alt.choice === "block") defender.blocksUsed += 1;
+            if (alt.choice === "parry") defender.parriesUsed += 1;
+            defense2 = { choice: alt.choice, score: alt.score, roll: roll2 };
+          }
+        }
       }
     }
   }
 
-  const hit = attack.success && (defense === null || !defense.success);
+  const defended = defense?.success === true || defense2?.roll.success === true;
+  const hit = attack.success && !defended;
   let basic: number | null = null;
+  let maxDamageCrit = false;
   let penetrating: number | null = null;
   let injury: number | null = null;
   let injuryEffects: InjuryEffects | null = null;
   if (hit) {
-    basic = basicDamage(rollDicePool(setup.damage, dice), setup.damageType, setup.halfDamage);
+    if (attack.total === 3) {
+      // A roll of 3 is a critical hit that does maximum damage, no roll (p. 27).
+      maxDamageCrit = true;
+      basic = basicDamage(setup.damage.dice * 6 + setup.damage.adds, setup.damageType, setup.halfDamage);
+    } else {
+      basic = basicDamage(rollDicePool(setup.damage, dice), setup.damageType, setup.halfDamage);
+    }
     const result = injuryFrom(basic, setup.dr ?? 0, setup.damageType);
     penetrating = result.penetrating;
     injury = result.injury;
     // HP loss, shock, major wounds and death checks (pp. 29-30).
-    injuryEffects = applyInjury(setup.defender, injury, dice);
+    injuryEffects = applyInjury(defender, injury, dice);
   }
 
   return {
@@ -289,12 +460,17 @@ export function attackExchange(
     defenseScoreUsed: score,
     defenderConsciousness,
     defenseStunned,
+    defenseIncreased,
+    defenseChoiceUsed: defending ? choice : setup.defense,
+    defenseFallback,
+    defense2,
     hit,
     basicDamage: basic,
+    maxDamageCrit,
     penetrating,
     injury,
     injuryEffects,
-    defenderHpAfter: setup.defender.hp,
+    defenderHpAfter: defender.hp,
   };
 }
 
@@ -328,12 +504,22 @@ export function narrate(
         `rolled ${c.roll.total} — failure by ${c.roll.margin}. ${names.defender} falls unconscious (p. 29).`,
     );
   } else if (defense === null) {
-    lines.push(
-      names.defense === "none"
-        ? `${names.defender} does not defend.`
-        : `${names.defender} cannot defend (unaware, down, or the defense is not available).`,
-    );
+    if (outcome.defenseFallback !== null) {
+      lines.push(`${names.defender} cannot defend: ${outcome.defenseFallback} (pp. 28-29).`);
+    } else {
+      lines.push(
+        names.defense === "none"
+          ? `${names.defender} does not defend.`
+          : `${names.defender} cannot defend (unaware, down, all-out attack, or the defense is not available).`,
+      );
+    }
   } else {
+    if (outcome.defenseFallback !== null) {
+      lines.push(
+        `${names.defender} cannot ${names.defense} — ${outcome.defenseFallback} (pp. 28-29) — ` +
+          `and ${outcome.defenseChoiceUsed}s instead.`,
+      );
+    }
     if (outcome.defenderConsciousness !== null) {
       const c = outcome.defenderConsciousness;
       const modText = c.modifier === 0 ? "" : ` (${c.modifier} for HP below zero)`;
@@ -343,14 +529,29 @@ export function narrate(
       );
     }
     const stunText = outcome.defenseStunned ? " (-4: stunned)" : "";
+    const aodText = outcome.defenseIncreased ? " (+2: all-out defense)" : "";
     lines.push(
-      `${names.defender} defends: ${names.defense} ${outcome.defenseScoreUsed}${stunText}, ` +
+      `${names.defender} defends: ${outcome.defenseChoiceUsed} ${outcome.defenseScoreUsed}${stunText}${aodText}, ` +
         `rolled ${defense.total} — ${defense.success ? `success by ${defense.margin}` : `failure by ${defense.margin}`}.`,
     );
     if (defense.success) {
       lines.push("The attack is turned aside.");
       return lines;
     }
+    if (outcome.defense2 !== null) {
+      const d2 = outcome.defense2;
+      lines.push(
+        `All-Out Defense (double, p. 25): ${names.defender} tries a second defense — ` +
+          `${d2.choice} ${d2.score}, rolled ${d2.roll.total} — ${d2.roll.success ? `success by ${d2.roll.margin}` : `failure by ${d2.roll.margin}`}.`,
+      );
+      if (d2.roll.success) {
+        lines.push("The attack is turned aside.");
+        return lines;
+      }
+    }
+  }
+  if (outcome.maxDamageCrit) {
+    lines.push("A roll of 3: maximum damage, no damage roll (p. 27).");
   }
   lines.push(
     `Hit for ${outcome.basicDamage} basic damage` +
