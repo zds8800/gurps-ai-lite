@@ -14,6 +14,8 @@
 import type { Character } from "../model/attribute.ts";
 import { baseSkillLevel } from "../model/defaults.ts";
 import { hitPoints, basicSpeed, dodgeScore } from "../model/secondary.ts";
+import { activeDefenseBonus, attackTraitModifiers } from "../model/traits.ts";
+import type { AttackTraitContext } from "../model/traits.ts";
 import type { Registry } from "../modules/loader.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { DicePool } from "../core/dice-pool.ts";
@@ -160,17 +162,18 @@ export function defenseScore(
 ): number | null {
   const shieldDB = context.shieldDB ?? 0;
   const postureMod = context.postureMod ?? 0; // p. 25: all active defenses
+  const traitBonus = choice === "none" ? 0 : activeDefenseBonus(defender, choice, context.parrySkillId);
   switch (choice) {
     case "dodge": {
       const dodge = dodgeScore(defender, context.encumbrance ?? 0);
-      return (context.reeling ? reelingDodge(dodge) : dodge) + shieldDB + postureMod;
+      return (context.reeling ? reelingDodge(dodge) : dodge) + shieldDB + postureMod + traitBonus;
     }
     case "block": {
       const shield = registry.skill("shield");
       if (!shield) return null;
       const level = baseSkillLevel(defender, shield);
       if (level === null) return null;
-      return 3 + Math.floor(level / 2) + shieldDB + postureMod;
+      return 3 + Math.floor(level / 2) + shieldDB + postureMod + traitBonus;
     }
     case "parry": {
       if (!context.parrySkillId) return null;
@@ -178,7 +181,7 @@ export function defenseScore(
       if (!skill) return null;
       const level = baseSkillLevel(defender, skill);
       if (level === null) return null;
-      return 3 + Math.floor(level / 2) + shieldDB + postureMod;
+      return 3 + Math.floor(level / 2) + shieldDB + postureMod + traitBonus;
     }
     case "none":
       return null;
@@ -290,6 +293,8 @@ export interface AttackSetup {
   dr?: number;
   /** Ranged attack at or past 1/2D range: halve basic damage (p. 29). */
   halfDamage?: boolean;
+  /** Explicit scene facts used by Bad Sight, Ambidexterity, Night Vision and Pacifism. */
+  traitContext?: AttackTraitContext;
   /** Defense computation inputs (encumbrance, shield, parry skill). */
   defenseContext?: DefenseContext;
 }
@@ -344,7 +349,10 @@ export function attackExchange(
   dice: DiceSource,
 ): AttackOutcome {
   // Shock (p. 30): the attacker's DX/IQ rolls take the penalty this turn.
-  const attackModifiers = [...(setup.attackModifiers ?? [])];
+  const attackModifiers = [
+    ...(setup.attackModifiers ?? []),
+    ...attackTraitModifiers(setup.attacker.character, setup.traitContext),
+  ];
   let shockApplied: number | null = null;
   if (setup.attacker.shock > 0) {
     shockApplied = setup.attacker.shock;
@@ -612,7 +620,9 @@ function narrateInjury(outcome: AttackOutcome, defender: string): string[] {
   }
   for (const check of fx.deathChecks) {
     const at = `${defender} is at -${check.multiple}xHP and rolls vs HT or die: rolled ${check.roll.total} — `;
-    if (check.outcome === "survived") {
+    if (check.outcome === "survived" && check.hardToKillSave) {
+      lines.push(`${at}success by ${check.roll.margin}. Hard to Kill made the difference: ${defender} survives but collapses, apparently dead (p. 9).`);
+    } else if (check.outcome === "survived") {
       lines.push(`${at}success by ${check.roll.margin}. Still fighting (p. 30).`);
     } else if (check.outcome === "mortal") {
       lines.push(`${at}failure by ${check.roll.margin}. ${defender} is mortally wounded — incapacitated, and any later failed death roll is fatal (p. 30).`);

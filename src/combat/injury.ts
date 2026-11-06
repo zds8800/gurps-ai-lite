@@ -10,6 +10,7 @@
 
 import type { Character } from "../model/attribute.ts";
 import { hitPoints } from "../model/secondary.ts";
+import { hasTrait, traitLevel } from "../model/traits.ts";
 import type { DiceSource } from "../core/dice.ts";
 import { resolve } from "../core/success-roll.ts";
 import type { RollResult } from "../core/types.ts";
@@ -61,6 +62,8 @@ export interface DeathCheck {
   multiple: number;
   roll: RollResult;
   outcome: "survived" | "mortal" | "died";
+  /** Hard to Kill made the difference: survive but collapse, apparently dead (p. 9). */
+  hardToKillSave?: boolean;
 }
 
 /** Everything one wound set in motion, for the CLI to narrate. */
@@ -90,7 +93,12 @@ export function applyInjury(victim: Combatant, injury: number, dice: DiceSource)
   victim.hp -= injury;
   const hpAfter = victim.hp;
 
-  if (injury > 0) victim.shock = shockPenalty(victim.shock, injury);
+  // High Pain Threshold: no shock penalty from injury (p. 9).
+  if (injury > 0) {
+    victim.shock = hasTrait(victim.character, "high-pain-threshold")
+      ? 0
+      : shockPenalty(victim.shock, injury);
+  }
 
   let majorWound = false;
   let knockdownRoll: RollResult | null = null;
@@ -99,13 +107,17 @@ export function applyInjury(victim: Combatant, injury: number, dice: DiceSource)
 
   if (victim.condition !== "dead" && injury > 0) {
     // Major wound: HT roll or be stunned and knocked down; failure by 5+
-    // or a critical failure knocks you out (p. 30).
+    // or a critical failure knocks you out (p. 30). High Pain Threshold is +3.
     if (
       (victim.condition === "ok" || victim.condition === "stunned") &&
       isMajorWound(maxHp, injury)
     ) {
       majorWound = true;
-      knockdownRoll = resolve({ baseSkill: victim.character.attributes.HT }, dice);
+      const hpt = hasTrait(victim.character, "high-pain-threshold");
+      knockdownRoll = resolve({
+        baseSkill: victim.character.attributes.HT,
+        modifiers: hpt ? [{ label: "High Pain Threshold", value: 3 }] : [],
+      }, dice);
       if (!knockdownRoll.success) {
         victim.condition =
           knockdownRoll.critical === "failure" || knockdownRoll.margin >= 5
@@ -117,13 +129,17 @@ export function applyInjury(victim: Combatant, injury: number, dice: DiceSource)
     }
 
     // Death (p. 30): at -5xHP there is no roll; otherwise roll HT at each
-    // newly crossed negative multiple of HP.
+    // newly crossed negative multiple of HP. Hard to Kill adds its level (p. 9).
     if (hpAfter <= -5 * maxHp) {
       diedInstantly = true;
       victim.condition = "dead";
     } else {
       for (const multiple of deathThresholdsCrossed(maxHp, hpBefore, hpAfter)) {
-        const roll = resolve({ baseSkill: victim.character.attributes.HT }, dice);
+        const hardToKill = traitLevel(victim.character, "hard-to-kill");
+        const roll = resolve({
+          baseSkill: victim.character.attributes.HT,
+          modifiers: hardToKill ? [{ label: "Hard to Kill", value: hardToKill }] : [],
+        }, dice);
         let outcome: DeathCheck["outcome"];
         if (roll.success) {
           outcome = "survived";
@@ -136,7 +152,15 @@ export function applyInjury(victim: Combatant, injury: number, dice: DiceSource)
         }
         if (outcome === "mortal") victim.condition = "mortally-wounded";
         if (outcome === "died") victim.condition = "dead";
-        deathChecks.push({ multiple, roll, outcome });
+        const hardToKillSave = outcome === "survived" && hardToKill > 0 &&
+          roll.total > victim.character.attributes.HT && roll.total > 4;
+        if (hardToKillSave) {
+          // If the bonus made the difference, the character survives but
+          // collapses, apparently dead, and wakes in the usual time (p. 9).
+          if (victim.condition !== "mortally-wounded") victim.condition = "unconscious";
+          victim.posture = "lying";
+        }
+        deathChecks.push({ multiple, roll, outcome, ...(hardToKillSave ? { hardToKillSave: true } : {}) });
         if (outcome !== "survived") break;
       }
     }

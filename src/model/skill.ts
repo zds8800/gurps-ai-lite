@@ -27,9 +27,9 @@ export interface SkillDef {
   difficulty: Difficulty;
   /** Empty means "Default: None" — the skill cannot be used untrained. */
   defaults: Default[];
-  /** True for /TL skills (p. 13). Tech-level rules themselves are out of scope. */
+  /** True for /TL skills (p. 13); personal TL is modeled in traits.ts. */
   tl: boolean;
-  /** Parked for the combat slice; combat skills work as plain skill tests. */
+  /** Combat skills supply attacks, Block and Parry as well as plain skill tests. */
   combat: boolean;
   /** Lite page for the entry. */
   page: number;
