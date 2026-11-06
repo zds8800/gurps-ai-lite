@@ -7,8 +7,7 @@
  * are accepted — the same ladder as creation (p. 13).
  *
  * Pure cost functions; the CLI applies the change and debits the balance.
- * Buying advantages and buying off disadvantages (also p. 17) need the
- * advantage/disadvantage model and are left to that slice.
+ * Advantage purchases and disadvantage buy-offs live in traits.ts (issue #45).
  */
 
 import type { AttributeId, Character } from "./attribute.ts";

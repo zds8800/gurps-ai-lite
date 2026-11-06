@@ -9,6 +9,8 @@
  */
 
 import type { Character } from "../model/attribute.ts";
+import { traitReactionModifier } from "../model/traits.ts";
+import type { ReactionContext } from "../model/traits.ts";
 import { rollDicePool } from "./dice-pool.ts";
 import type { DiceSource } from "./dice.ts";
 import { resolveHandOff } from "./hand-off.ts";
@@ -73,9 +75,8 @@ export function reactionRoll(modifier: number, dice: DiceSource): ReactionOutcom
 /**
  * The sheet's answers to the reaction requests (resolution order: sheet
  * first, issue #39). Standing modifiers whose label mentions "reaction"
- * supply the modifier — nothing in Lite's character rules populates those
- * yet (reputation and appearance arrive with the advantages slice); the
- * wiring is proven here so they slot in without engine changes.
+ * supply the base modifier. Trait bonuses are added separately by
+ * resolveReaction because their recognition/hearing/interaction context matters.
  */
 export function reactionSheetAnswers(character: Character | null): (key: string) => number | undefined {
   return (key: string) => {
@@ -93,12 +94,13 @@ export function reactionSheetAnswers(character: Character | null): (key: string)
  */
 export function resolveReaction(
   character: Character | null,
-  typed: { predetermined?: boolean; modifier?: number },
+  typed: { predetermined?: boolean; modifier?: number; context?: ReactionContext },
   dice: DiceSource,
 ): ReactionOutcome | "predetermined" {
   const sheet = reactionSheetAnswers(character);
   const predetermined = resolveHandOff(REACTION_REQUESTS.predetermined, sheet, typed.predetermined);
   if (predetermined === true) return "predetermined";
-  const modifier = resolveHandOff(REACTION_REQUESTS.modifier, sheet, typed.modifier) ?? 0;
-  return reactionRoll(modifier as number, dice);
+  const base = resolveHandOff(REACTION_REQUESTS.modifier, sheet, typed.modifier) ?? 0;
+  const traits = character ? traitReactionModifier(character, typed.context) : 0;
+  return reactionRoll((base as number) + traits, dice);
 }

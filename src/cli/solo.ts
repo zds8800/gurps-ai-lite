@@ -17,6 +17,9 @@ import { baseSkillLevel } from "../model/defaults.ts";
 import { importGcsSheet } from "../model/gcs.ts";
 import { attributeImprovementCost, skillImprovementCost } from "../model/improvement.ts";
 import { pointsToRelativeLevel } from "../model/skill.ts";
+import { assertDisadvantageLimit, attackTraitModifiers, personalTL } from "../model/traits.ts";
+import type { AttackTraitContext } from "../model/traits.ts";
+import { runTraitCommand, traitSheetLines } from "./traits.ts";
 import type { SkillDef } from "../model/skill.ts";
 import { Registry } from "../modules/loader.ts";
 import { LITE_CORE } from "../modules/lite-core/index.ts";
@@ -763,6 +766,7 @@ function runExchange(
   let modeWord: string | null = null;
   let range: Partial<Record<"rng" | "half" | "max", number>> = {};
   let rangedManeuver: "allout" | "moveattack" | null = null;
+  const traitContext: AttackTraitContext = {};
   for (let i = 0; i < args.length; i++) {
     const t = args[i];
     if (t.toLowerCase() === "dmg") {
@@ -783,6 +787,15 @@ function runExchange(
     } else if (["allout", "moveattack"].includes(t.toLowerCase())) {
       if (!opts.ranged) return [`"${t}" as a flag is only for shoot; melee uses the ${t} command with its own options (p. 25).`];
       rangedManeuver = t.toLowerCase() as "allout" | "moveattack";
+    } else if (t.toLowerCase() === "darkness") {
+      const value = Number(args[++i]);
+      if (!Number.isInteger(value) || value < 0 || value > 9) return ["Darkness penalty is a whole-number magnitude from 0 to 9."];
+      traitContext.darknessPenalty = value;
+    } else if (["offhand", "person", "deadly", "unseenface"].includes(t.toLowerCase())) {
+      if (t.toLowerCase() === "offhand") traitContext.offHand = true;
+      if (t.toLowerCase() === "person") traitContext.targetPerson = true;
+      if (t.toLowerCase() === "deadly") traitContext.deadlyAttack = true;
+      if (t.toLowerCase() === "unseenface") traitContext.targetFaceUnseen = true;
     } else if (/^[+-]\d+$/.test(t)) {
       modTokens.push(t);
     } else {
@@ -1030,7 +1043,8 @@ function runExchange(
       }
     }
   }
-  const modSum = maneuverMods.reduce((s, m) => s + m.value, 0);
+  const traitModSum = attackTraitModifiers(attacker.character, traitContext).reduce((s, m) => s + m.value, 0);
+  const modSum = maneuverMods.reduce((s, m) => s + m.value, 0) + traitModSum;
   if (capMelee9) {
     // "Your adjusted skill cannot exceed 9." Shock (engine-side) also counts,
     // so cap the base such that base + mods - shock <= 9.
@@ -1066,6 +1080,7 @@ function runExchange(
         defender,
         defense: choice,
         defenseContext: { parrySkillId, shieldDB, postureMod },
+        traitContext,
         dr: wornDR(defender.character),
         halfDamage: stats !== null && atHalfDamage(stats),
       },
@@ -1167,6 +1182,9 @@ export function runCommand(state: SoloState, line: string): string[] {
       if (!ATTRIBUTE_IDS.includes(attr)) return [`Unknown attribute "${attrRaw}". Use ST, DX, IQ or HT.`];
       const value = Number(valueRaw);
       if (!Number.isInteger(value) || value < 1) return [`Bad level "${valueRaw}". Attributes are whole numbers, 1 or more (p. 4).`];
+      try {
+        assertDisadvantageLimit({ ...state.character, attributes: { ...state.character.attributes, [attr]: value } });
+      } catch (error) { return [(error as Error).message]; }
       state.character.attributes[attr] = value;
       const cost = (value - 10) * state.registry.attribute(attr)!.costPerLevel;
       return [`${attr} ${value} (cost ${cost} points).`];
@@ -1251,6 +1269,17 @@ export function runCommand(state: SoloState, line: string): string[] {
       return [`${what} (cost ${cost} points). ${c.unspentPoints} unspent left.`];
     }
 
+    case "traits":
+    case "add":
+    case "language":
+    case "quirk":
+    case "limit":
+    case "gain":
+    case "buyoff":
+    case "selfcontrol":
+    case "sense":
+      return runTraitCommand(state, cmd, args);
+
     case "formula": {
       const word = args.join(" ").trim();
       if (!word) return ["Usage: formula <skill>"];
@@ -1320,6 +1349,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       if (!level) return [`Usage: wealth <level>. Levels: ${Object.keys(WEALTH_LEVELS).join(", ")} (p. 8).`];
       const wl = WEALTH_LEVELS[level];
       if (!wl) return [`Unknown wealth level "${level}". Levels: ${Object.keys(WEALTH_LEVELS).join(", ")} (p. 8).`];
+      try { assertDisadvantageLimit({ ...c, wealthLevel: level }); } catch (error) { return [(error as Error).message]; }
       c.wealthLevel = level;
       c.money = startingWealth(state.tl, level);
       return [
@@ -1349,10 +1379,17 @@ export function runCommand(state: SoloState, line: string): string[] {
       const found = armor ?? shield ?? melee ?? ranged;
       if (!found) return [`"${itemName}" is not in the Lite equipment tables (pp. 18-22). Browse: armory ${itemName}`];
       const itemTL = armor || shield ? 0 : (found as MeleeWeapon | RangedWeapon).tl; // the armor/shield tables print no TL
-      if (itemTL > state.tl) {
+      const characterTL = personalTL(c, state.tl);
+      if (itemTL > characterTL) {
+        if (characterTL === state.tl) {
+          return [
+            `${found.name} is TL${itemTL}; the campaign is TL${state.tl}. ` +
+              `You may only buy weapons of your TL or less, unless you have the High TL trait (p. 19).`,
+          ];
+        }
         return [
-          `${found.name} is TL${itemTL}; the campaign is TL${state.tl}. ` +
-            `You may only buy weapons of your TL or less, unless you have the High TL trait (p. 19).`,
+          `${found.name} is TL${itemTL}; ${c.name}'s personal TL is ${characterTL} (campaign TL${state.tl}). ` +
+            `You may only buy weapons of your personal TL or less; High TL raises it and Low TL lowers it (pp. 7, 19).`,
         ];
       }
       const money = c.money ?? 0;
@@ -1497,6 +1534,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         }
         if (ready.length > 0) lines.push(`  Readied: ${ready.join(", ")}.`);
       }
+      lines.push(...traitSheetLines(state));
       lines.push(`Point total: ${pointTotal(c)}.`);
       lines.push(`Unspent points: ${c.unspentPoints ?? 0} (award/improve, p. 17).`);
       return lines;
@@ -1627,7 +1665,19 @@ export function runCommand(state: SoloState, line: string): string[] {
       // Reaction roll (p. 3): 3d plus modifiers applied directly, high is
       // good. "predetermined" answers the channel's yes/no — then no roll.
       const predetermined = args.some((a) => a.toLowerCase() === "predetermined");
-      const modTokens = args.filter((a) => a.toLowerCase() !== "predetermined");
+      const contextWords = new Set(["recognized", "heard", "interacting", "defer", "attracted", "noticed", "intolerance", "naive", "experienced"]);
+      const has = (word: string) => args.some((a) => a.toLowerCase() === word);
+      const context = {
+        recognized: has("recognized") || undefined,
+        heard: has("heard") || undefined,
+        activeInteraction: has("interacting") || undefined,
+        defer: has("defer") || undefined,
+        attracted: has("attracted") || undefined,
+        noticed: has("noticed") || undefined,
+        naive: has("naive") || undefined,
+        experienced: has("experienced") || undefined,
+      };
+      const modTokens = args.filter((a) => a.toLowerCase() !== "predetermined" && !contextWords.has(a.toLowerCase()));
       const mods = parseModifiers(modTokens);
       if (typeof mods === "string") return [mods];
       const typedSum = mods.reduce((s, m) => s + m.value, 0);
@@ -1635,7 +1685,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       try {
         result = resolveReaction(
           state.character,
-          { predetermined: predetermined || undefined, modifier: mods.length > 0 ? typedSum : undefined },
+          { predetermined: predetermined || undefined, modifier: mods.length > 0 ? typedSum : undefined, context },
           state.dice,
         );
       } catch (error) {
@@ -1972,6 +2022,15 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
         "  award <n>             Award bonus character points; they sit as unspent on the sheet (p. 17).",
         "  improve <ST/DX/IQ/HT> <level> | improve <skill> <points>  Spend unspent points at creation costs (p. 17).",
+        "  traits [word]         Browse every Lite advantage/disadvantage, variant and exact cost (pp. 6-12).",
+        "  add <trait> [variant] [level] [note <text>]  Add a trait at creation; printed costs only.",
+        "  language <name> <spoken> <written> [native]  Add comprehension; levels none/broken/accented/native (p. 7).",
+        "  quirk <description>   Add one of up to five quirks, -1 point each (p. 12).",
+        "  limit <n|none>        Set the GM disadvantage cap as a positive magnitude; no default cap (pp. 4, 10).",
+        "  gain <trait|language> ... [gm]  Spend unspent points; languages/Status/Combat Reflexes normally allowed (p. 17).",
+        "  buyoff <trait|quirk> ...  Spend unspent points equal to a disadvantage's printed cost (quirks cost 1).",
+        "  selfcontrol <trait> [mods]  Optional 3d self-control roll against 12, with situational modifiers (p. 10).",
+        "  sense <vision|hearing|taste-smell|touch|danger> [darkness n] [mods]  Perception roll with trait bonuses (pp. 6, 8-10).",
         "  tl <0-12>             Set the campaign tech level (gates purchases; sets starting wealth, pp. 7, 18).",
         "  wealth <level>        Set wealth level and reset money: dead broke ... filthy rich (p. 8).",
         "  armory [word]         Browse the armor, shield and weapon tables (pp. 18-22).",
