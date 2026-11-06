@@ -144,11 +144,11 @@ test("a shot beyond Max range is refused with the numbers (p. 27)", () => {
 test("shoot requires the range stats; rng/half/max are rejected on melee attacks", () => {
   const missing = session(["fight", "shoot brawling dmg 1d+2 imp"]);
   assert.deepEqual(missing.slice(-1), [
-    "Usage: shoot <skill> dmg <pool> <type> rng <yards> half <1/2D> max <Max> [allout|moveattack] [vs ...] [mods]  (p. 27).",
+    "How far is the target? shoot <skill> rng <yards> half <1/2D> max <Max> — or ready a ranged weapon to use its table stats (p. 27).",
   ]);
   const melee = session(["fight", "attack brawling rng 5"]);
   assert.deepEqual(melee.slice(-1), [
-    "rng/half/max are for ranged attacks: use shoot <skill> dmg <pool> <type> rng <yards> half <1/2D> max <Max> (p. 27).",
+    "rng/half/max are for ranged attacks: use shoot <skill> [dmg <pool> <type>] rng <yards> [half <1/2D> max <Max>] (p. 27).",
   ]);
 });
 

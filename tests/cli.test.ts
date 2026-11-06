@@ -27,9 +27,10 @@ test("the design's sample session, corrected to the approved cost table", () => 
   ]);
   assert.deepEqual(out[0], "Dice seeded with 42.");
   assert.deepEqual(out[1], "Mara created. ST 10 DX 10 IQ 10 HT 10. 0 points spent.");
-  assert.deepEqual(out[2], "DX 12 (cost 40 points).");
+  assert.deepEqual(out[2], "Average wealth: $1,000 at TL3 (change with tl/wealth; buy gear with buy).");
+  assert.deepEqual(out[3], "DX 12 (cost 40 points).");
   // 2 points in an Average skill is Attribute+0 (p. 13), so IQ 10 -> 10.
-  assert.deepEqual(out[3], "Lockpicking (IQ, Average) at 2 points: IQ 10 + 0 = 10.");
+  assert.deepEqual(out[4], "Lockpicking (IQ, Average) at 2 points: IQ 10 + 0 = 10.");
   assert.ok(out.some((l) => l.trim().startsWith("Lockpicking (IQ/A) 2 points: level 10")));
   assert.ok(out.some((l) => l.startsWith("Point total: 42")));
   assert.deepEqual(
@@ -65,11 +66,11 @@ test("no-default skills cannot be attempted untrained", () => {
 
 test("bad input gets a plain message, not a crash", () => {
   const out = session(["new M", "test", "test nosuchskill", "test ST +x", "set ZZ 5", "frobnicate"]);
-  assert.deepEqual(out[1], "Usage: test <skill or attribute> [+n or -n ...]");
-  assert.ok(out[2].startsWith("Unknown skill"));
-  assert.deepEqual(out[3], 'Bad modifier "+x". Modifiers look like +2 or -5.');
-  assert.deepEqual(out[4], 'Unknown attribute "ZZ". Use ST, DX, IQ or HT.');
-  assert.deepEqual(out[5], 'Unknown command "frobnicate". Type help.');
+  assert.deepEqual(out[2], "Usage: test <skill or attribute> [+n or -n ...]");
+  assert.ok(out[3].startsWith("Unknown skill"));
+  assert.deepEqual(out[4], 'Bad modifier "+x". Modifiers look like +2 or -5.');
+  assert.deepEqual(out[5], 'Unknown attribute "ZZ". Use ST, DX, IQ or HT.');
+  assert.deepEqual(out[6], 'Unknown command "frobnicate". Type help.');
 });
 
 test("contest command runs a Quick Contest against a target number", () => {
@@ -85,8 +86,8 @@ test("contest command runs a Quick Contest against a target number", () => {
 
 test("contest usage errors are plain", () => {
   const out = session(["new M", "contest stealth", "contest stealth vs abc"]);
-  assert.deepEqual(out[1], "Usage: contest <skill or attribute> [+n or -n ...] vs <number>");
-  assert.deepEqual(out[2], 'Bad opponent skill "abc". Give their effective skill as a number.');
+  assert.deepEqual(out[2], "Usage: contest <skill or attribute> [+n or -n ...] vs <number>");
+  assert.deepEqual(out[3], 'Bad opponent skill "abc". Give their effective skill as a number.');
 });
 
 test("formula explains a skill with a default", () => {
@@ -156,12 +157,13 @@ test("attack needs a fight and a damage source", () => {
     "attack stealth", // stealth is not an unarmed skill: needs dmg
     "attack stealth dmg 2d cut vs dodge",
   ]);
-  assert.deepEqual(out[2], "No fight yet. Load yourself (new/load) and a foe: foe <file>.");
+  assert.deepEqual(out[3], "No fight yet. Load yourself (new/load) and a foe: foe <file>.");
   assert.ok(
     out.some(
       (l) =>
         l ===
-        "Give the weapon's damage: ... dmg 2d+1 cut. A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).",
+        "Give the weapon's damage (... dmg 2d+1 cut), or ready a weapon that uses Stealth (buy/ready). " +
+          "A punch needs no weapon: use brawling or karate (thr-1 cr, p. 26).",
     ),
   );
   assert.ok(out.some((l) => l.startsWith("M attacks with Stealth (2d cut)")));
