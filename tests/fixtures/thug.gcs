@@ -1,0 +1,58 @@
+{
+ "version": 4,
+ "id": "T7h6u5g4000000000000000001",
+ "total_points": 60,
+ "profile": {
+  "name": "Thug",
+  "player_name": "gurps-ai-lite test fixture",
+  "notes": "Third combatant for the multi-combatant tests (issue #31). Not a real person. Written by hand in the GCS 5 file format."
+ },
+ "attributes": [
+  {
+   "attr_id": "st",
+   "adj": 2,
+   "calc": {
+    "value": 12,
+    "points": 20
+   }
+  },
+  {
+   "attr_id": "dx",
+   "adj": 1,
+   "calc": {
+    "value": 11,
+    "points": 20
+   }
+  },
+  {
+   "attr_id": "iq",
+   "adj": -1,
+   "calc": {
+    "value": 9,
+    "points": -20
+   }
+  },
+  {
+   "attr_id": "ht",
+   "adj": 1,
+   "calc": {
+    "value": 11,
+    "points": 10
+   }
+  }
+ ],
+ "skills": [
+  {
+   "id": "sT7h6u5g4000000000000001",
+   "name": "Brawling",
+   "difficulty": "dx/e",
+   "points": 2,
+   "reference": "L15",
+   "calc": {
+    "level": 12,
+    "relative_level": "DX+1",
+    "points": 2
+   }
+  }
+ ]
+}
