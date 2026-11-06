@@ -22,6 +22,7 @@ import { LITE_CORE } from "../modules/lite-core/index.ts";
 import { rollOdds } from "../core/odds.ts";
 import { resolve } from "../core/success-roll.ts";
 import { quickContest } from "../core/quick-contest.ts";
+import { resolveReaction } from "../core/reaction.ts";
 import { SeededDice, SystemDice } from "../core/dice.ts";
 import { parseDicePool, formatDicePool } from "../core/dice-pool.ts";
 import { strengthDamage, hitPoints } from "../model/secondary.ts";
@@ -1262,6 +1263,38 @@ export function runCommand(state: SoloState, line: string): string[] {
       return lines;
     }
 
+    case "react": {
+      // Reaction roll (p. 3): 3d plus modifiers applied directly, high is
+      // good. "predetermined" answers the channel's yes/no — then no roll.
+      const predetermined = args.some((a) => a.toLowerCase() === "predetermined");
+      const modTokens = args.filter((a) => a.toLowerCase() !== "predetermined");
+      const mods = parseModifiers(modTokens);
+      if (typeof mods === "string") return [mods];
+      const typedSum = mods.reduce((s, m) => s + m.value, 0);
+      let result;
+      try {
+        result = resolveReaction(
+          state.character,
+          { predetermined: predetermined || undefined, modifier: mods.length > 0 ? typedSum : undefined },
+          state.dice,
+        );
+      } catch (error) {
+        return [(error as Error).message];
+      }
+      if (result === "predetermined") {
+        return ["The NPC's reaction is predetermined — no reaction roll (p. 3). Play the NPC as scripted."];
+      }
+      const modText =
+        result.modifier === 0
+          ? ", no modifiers"
+          : `, modifier${result.modifier === 1 || result.modifier === -1 ? "" : "s"} ${result.modifier > 0 ? "+" : ""}${result.modifier}`;
+      return [
+        `Reaction roll: rolled 3d = ${result.rolled}${modText}, total ${result.total} — ${result.band.name} (p. 3).`,
+        result.band.guideline,
+        "(The GM keeps this roll secret from the players, p. 3.)",
+      ];
+    }
+
     case "seed": {
       const seed = Number(args[0]);
       if (!Number.isInteger(seed)) return ["Usage: seed <n>"];
@@ -1581,6 +1614,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  sheet                 Print attributes, skills, wealth, gear and point total.",
         "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
         "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
+        "  react [predetermined] [+n or -n ...]  Reaction roll: 3d plus modifiers, read on the Reaction Table (p. 3).",
         "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  foe <path>            Load an opponent from a .gcs file; repeat to add more fighters.",
