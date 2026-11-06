@@ -47,12 +47,14 @@ import {
   findRangedWeapon,
   findShield,
   MELEE_WEAPON_TABLE,
+  parseShots,
   RANGED_WEAPON_TABLE,
   SHIELD_TABLE,
   startingWealth,
   WEALTH_LEVELS,
 } from "../model/equipment.ts";
 import type { MeleeWeapon, RangedWeapon, WeaponDamage } from "../model/equipment.ts";
+import { parsePosture, POSTURE_TABLE, postureChangeError } from "../combat/posture.ts";
 import type { Combatant, DamageType, DefenseChoice, Maneuver } from "../combat/attack.ts";
 import type { DiceSource } from "../core/dice.ts";
 import type { Modifier } from "../core/types.ts";
@@ -259,6 +261,7 @@ function setDefensePolicy(state: SoloState, fighter: Fighter, raw: string, cmd: 
       parrySkillId: combatantParrySkill(state, fighter.combatant),
       shieldDB: readyShieldDB(fighter.combatant.character),
       reeling: isReeling(hitPoints(fighter.combatant.character), fighter.combatant.hp),
+      postureMod: POSTURE_TABLE[fighter.combatant.posture].defense,
     });
     if (score === null) {
       return [
@@ -296,6 +299,238 @@ function takeTurn(combatant: Combatant, maneuver: Maneuver): void {
   combatant.maneuver = maneuver;
   combatant.blocksUsed = 0;
   combatant.parriesUsed = 0;
+  // A different maneuver abandons multi-second work already in progress.
+  if (maneuver.kind !== "concentrate") combatant.concentration = undefined;
+  if (maneuver.kind !== "ready") combatant.readyTask = undefined;
+}
+
+/** Change Posture (p. 25); shared by posture and npc <name> posture. */
+function postureTurn(state: SoloState, fighter: Fighter, args: string[]): string[] {
+  const combatant = fighter.combatant;
+  const gates = actionGates(state, combatant);
+  if (gates) return gates;
+  const posture = parsePosture(args.join(" "));
+  if (!posture) return ["Usage: posture <standing|crouching|kneeling|crawling|sitting|lying>  (Change Posture, p. 25)"];
+  const error = postureChangeError(combatant.posture, posture);
+  if (error) return [error];
+  takeTurn(combatant, { kind: "change-posture", posture });
+  combatant.posture = posture;
+  const row = POSTURE_TABLE[posture];
+  const mod = (n: number) => n > 0 ? `+${n}` : `${n}`;
+  return [
+    `${combatant.character.name} changes posture to ${posture}: melee attack ${mod(row.attack)}, ` +
+      `active defense ${mod(row.defense)}, ranged target ${mod(row.target)} (p. 25).`,
+  ];
+}
+
+/** Resolve a skill/attribute name for a Concentrate task, without rolling. */
+function concentrationTarget(state: SoloState, combatant: Combatant, target: string): { base: number; label: string } | string {
+  const attr = target.toUpperCase() as AttributeId;
+  if (ATTRIBUTE_IDS.includes(attr)) return { base: combatant.character.attributes[attr], label: attr };
+  const found = findSkillRef(state, target);
+  if (typeof found === "string") return found;
+  try {
+    const base = baseSkillLevel(combatant.character, found);
+    if (base === null) return `${displayName(found)} has no default (p. 13). You cannot attempt it untrained.`;
+    return { base, label: displayName(found) };
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+/** The success roll at the end of a Concentrate task. */
+function completeConcentration(state: SoloState, combatant: Combatant): string[] {
+  const task = combatant.concentration!;
+  const target = concentrationTarget(state, combatant, task.target);
+  if (typeof target === "string") return [target];
+  combatant.concentration = undefined;
+  const effective = target.base + task.mods.reduce((s, m) => s + m.value, 0);
+  const result = resolve({ baseSkill: target.base, modifiers: task.mods }, state.dice);
+  if (result.status === "not-allowed") return [`Effective skill ${effective} is below 3. You may not attempt this roll (p. 2).`];
+  const margin = result.margin!;
+  const critical = result.critical === "success" ? " Critical success!" : result.critical === "failure" ? " Critical failure!" : "";
+  return [
+    `${target.label} ${target.base}${formatMods(task.mods)}, effective skill ${effective}.`,
+    `Rolled 3d: ${result.total}.`,
+    result.success
+      ? `${margin >= 0 ? `Success by ${margin}` : `Success (margin ${margin}, automatic result)`}.${critical} Concentration complete.`
+      : `${margin >= 0 ? `Failure by ${margin}` : `Failure (margin ${margin}, automatic result)`}.${critical}`,
+  ];
+}
+
+/** Concentrate (p. 26): one second, or a multi-second task continued with bare "concentrate". */
+function concentrateTurn(state: SoloState, args: string[]): string[] {
+  if (!state.combat) return ["Concentrate is a combat maneuver. Start a fight first (p. 26)."];
+  const combatant = state.combat.you.combatant;
+  const gates = actionGates(state, combatant);
+  if (gates) return gates;
+  if (args.length === 0) {
+    if (!combatant.concentration) {
+      return ["Usage: concentrate <skill or attribute> [secs <n>] [+n or -n ...]; bare concentrate continues a task (p. 26)."];
+    }
+    takeTurn(combatant, { kind: "concentrate" });
+    combatant.concentration.secondsLeft -= 1;
+    if (combatant.concentration.secondsLeft > 0) {
+      return [
+        `${combatant.character.name} continues concentrating: ${combatant.concentration.secondsLeft} second(s) remain. Continue with: concentrate.`,
+      ];
+    }
+    return completeConcentration(state, combatant);
+  }
+  if (combatant.concentration) return [`${combatant.character.name} is already concentrating. Continue with bare: concentrate.`];
+
+  const targetTokens: string[] = [];
+  const modTokens: string[] = [];
+  let seconds = 1;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (token.toLowerCase() === "secs") {
+      seconds = Number(args[i + 1]);
+      if (!Number.isInteger(seconds) || seconds < 1) return [`Bad duration "${args[i + 1] ?? ""}". secs is a whole number, 1 or more.`];
+      i += 1;
+    } else if (/^[+-]/.test(token)) {
+      modTokens.push(token);
+    } else {
+      targetTokens.push(token);
+    }
+  }
+  const targetName = targetTokens.join(" ");
+  const mods = parseModifiers(modTokens);
+  if (typeof mods === "string") return [mods];
+  if (!targetName) return ["Usage: concentrate <skill or attribute> [secs <n>] [+n or -n ...]  (p. 26)"];
+  const target = concentrationTarget(state, combatant, targetName);
+  if (typeof target === "string") return [target];
+  takeTurn(combatant, { kind: "concentrate" });
+  combatant.concentration = { target: targetName, mods, secondsLeft: seconds - 1 };
+  if (seconds === 1) return completeConcentration(state, combatant);
+  return [
+    `${combatant.character.name} begins concentrating on ${target.label} for ${seconds} seconds. ` +
+      `${seconds - 1} second(s) remain; continue with: concentrate.`,
+  ];
+}
+
+/** Advance a multi-second Ready task by one one-second maneuver (pp. 19-20, 26). */
+function continueReady(state: SoloState, combatant: Combatant): string[] {
+  const task = combatant.readyTask!;
+  takeTurn(combatant, { kind: "ready" });
+  task.secondsLeft -= 1;
+  const name = combatant.character.name;
+  if (task.secondsLeft > 0) {
+    return [`${name} readies ${task.item}: ${task.secondsLeft} second(s) remain. Continue with: ready.`];
+  }
+  if (task.kind === "reready") {
+    combatant.readyTask = undefined;
+    combatant.meleeUnready = undefined;
+    return [`${name} takes Ready and readies the ${task.item} again (p. 20).`];
+  }
+
+  const weapon = findRangedWeapon(task.item);
+  const shots = weapon ? parseShots(weapon.shots) : null;
+  if (!weapon || !shots) {
+    combatant.readyTask = undefined;
+    return [`Cannot finish reloading ${task.item}: its Shots data is unavailable.`];
+  }
+  if (!shots.perShot) {
+    combatant.shotsLeft = shots.count;
+    combatant.readyTask = undefined;
+    return [`${name} finishes reloading the ${weapon.name}: ${shots.count} shots ready (pp. 19-20).`];
+  }
+  combatant.shotsLeft = Math.min(shots.count, (combatant.shotsLeft ?? 0) + 1);
+  if (combatant.shotsLeft < shots.count) {
+    task.secondsLeft = shots.reloadSeconds; // keep loading individually, one shot per reload time
+    return [
+      `${name} loads one shot into the ${weapon.name}: ${combatant.shotsLeft}/${shots.count} ready. ` +
+        `Continue with: ready (${shots.reloadSeconds} seconds per shot, pp. 19-20).`,
+    ];
+  }
+  combatant.readyTask = undefined;
+  return [`${name} finishes reloading the ${weapon.name}: ${shots.count}/${shots.count} shots ready (pp. 19-20).`];
+}
+
+/** Ready equipment instantly outside combat, or as a one-second maneuver in combat (pp. 19-20, 26). */
+function readyTurn(state: SoloState, args: string[]): string[] {
+  const c = state.character;
+  if (!c) return ["No character yet. Use: new <name>"];
+  const combatant = state.combat?.you.combatant ?? null;
+  if (combatant) {
+    const gates = actionGates(state, combatant);
+    if (gates) return gates;
+    if (combatant.readyTask) {
+      const itemName = args.join(" ").trim();
+      if (itemName && itemName.toLowerCase() !== combatant.readyTask.item.toLowerCase()) {
+        return [`${c.name} is already readying ${combatant.readyTask.item}. Continue with bare: ready.`];
+      }
+      return continueReady(state, combatant);
+    }
+
+    const itemName = args.join(" ").trim();
+    if (combatant.meleeUnready && (!itemName || itemName.toLowerCase() === combatant.meleeUnready.toLowerCase())) {
+      combatant.readyTask = { item: combatant.meleeUnready, secondsLeft: 1, kind: "reready" };
+      return continueReady(state, combatant);
+    }
+    const currentRanged = c.readyRanged ? findRangedWeapon(c.readyRanged) : null;
+    const currentShots = currentRanged ? parseShots(currentRanged.shots) : null;
+    const namesCurrent = !!currentRanged && (!itemName ||
+      itemName.toLowerCase() === currentRanged.name.toLowerCase() ||
+      currentRanged.name.toLowerCase() === `${itemName.toLowerCase()} (thrown)`);
+    if (currentRanged && currentShots && !currentShots.thrown && namesCurrent) {
+      combatant.shotsLeft ??= currentShots.count;
+      if (combatant.shotsLeft < currentShots.count) {
+        combatant.readyTask = { item: currentRanged.name, secondsLeft: currentShots.reloadSeconds, kind: "reload" };
+        return continueReady(state, combatant);
+      }
+    }
+    if (!itemName) return ["Usage: ready <weapon or shield|none>; bare ready also re-readies a weapon or continues a reload."];
+  }
+
+  const itemName = args.join(" ").trim();
+  if (itemName.toLowerCase() === "shield none") {
+    const oldShield = c.readyShield;
+    c.readyShield = undefined;
+    if (combatant) takeTurn(combatant, { kind: "ready" });
+    return [oldShield ? `${c.name} readies their ${oldShield} away (p. 26).` : `${c.name} has no shield readied.`];
+  }
+  if (itemName.toLowerCase() === "none") {
+    c.readyMelee = undefined;
+    c.readyRanged = undefined;
+    if (combatant) {
+      takeTurn(combatant, { kind: "ready" });
+      combatant.shotsLeft = null;
+      combatant.meleeUnready = undefined;
+    }
+    return [`${c.name} readies no weapon — a punch is thr-1 cr (p. 26). Shield stays readied.`];
+  }
+  if (!itemName) return ["Usage: ready <weapon or shield|none>"];
+  const owned = (c.equipment ?? []).find((e) => e.name.toLowerCase() === itemName.toLowerCase());
+  if (!owned) {
+    const known = findMeleeWeapon(itemName) ?? findRangedWeapon(itemName) ?? findShield(itemName);
+    return known
+      ? [`${c.name} does not own a ${known.name}. Buy it first: buy ${itemName}`]
+      : [`"${itemName}" is not in the Lite equipment tables (pp. 18-22). Browse: armory ${itemName}`];
+  }
+  const melee = findMeleeWeapon(owned.name);
+  const ranged = findRangedWeapon(owned.name) ?? findRangedWeapon(`${owned.name} (thrown)`);
+  const shield = findShield(owned.name);
+  if (!melee && !ranged && !shield) return [`${owned.name} is not a weapon or shield.`];
+  const lines: string[] = [];
+  if (melee) c.readyMelee = melee.name;
+  if (ranged) c.readyRanged = ranged.name;
+  if (shield) {
+    c.readyShield = shield.name;
+    lines.push(`${c.name} readies ${shield.name} (DB ${shield.db} to all active defenses, p. 19).`);
+  } else if (melee && ranged) {
+    lines.push(`${c.name} readies ${melee.name} — melee, and thrown (Acc ${ranged.acc}).`);
+  } else if (melee) {
+    lines.push(`${c.name} readies ${melee.name}.`);
+  } else if (ranged) {
+    lines.push(`${c.name} readies ${ranged.name} (Acc ${ranged.acc}${ranged.scopeBonus ? `+${ranged.scopeBonus} scope` : ""}).`);
+  }
+  if (combatant) {
+    takeTurn(combatant, { kind: "ready" });
+    if (melee) combatant.meleeUnready = undefined;
+    if (ranged) combatant.shotsLeft = parseShots(ranged.shots)?.count ?? null;
+  }
+  return lines;
 }
 
 /** A stunned combatant's forced Do Nothing turn (p. 30), with the recovery roll. */
@@ -334,6 +569,7 @@ function takeAllOutDefense(state: SoloState, fighter: Fighter, args: string[], c
     const score = defenseScore(state.registry, combatant.character, which as DefenseChoice, {
       parrySkillId,
       reeling: isReeling(hitPoints(combatant.character), combatant.hp),
+      postureMod: POSTURE_TABLE[combatant.posture].defense,
     });
     if (score === null) {
       return [`${name} cannot ${which} — no usable defense there (p. 28).`];
@@ -455,6 +691,30 @@ interface ExchangeOptions {
   ranged?: boolean;
 }
 
+/** Will-3 or lose a Concentrate task when defense, knockdown or injury distracts you (p. 26). */
+function concentrationDistraction(
+  state: SoloState,
+  defender: Combatant,
+  outcome: ReturnType<typeof attackExchange>,
+): string[] {
+  if (!defender.concentration) return [];
+  const distracted = outcome.defense !== null || outcome.defense2 !== null || (outcome.injury ?? 0) > 0;
+  if (!distracted) return [];
+  const name = defender.character.name;
+  const roll = resolve({ baseSkill: defender.character.attributes.IQ - 3 }, state.dice);
+  if (roll.success) {
+    return [
+      `${name} is distracted while concentrating: Will-3 (effective ${roll.effectiveSkill}), rolled ${roll.total} — ` +
+        `success by ${roll.margin}; concentration holds (p. 26).`,
+    ];
+  }
+  defender.concentration = undefined;
+  return [
+    `${name} is distracted while concentrating: Will-3 (effective ${roll.effectiveSkill}), rolled ${roll.total} — ` +
+      `failure by ${roll.margin}; concentration is lost and the task must start over (p. 26).`,
+  ];
+}
+
 /**
  * One attack exchange, either direction (issue #21): `attack` is you against
  * the foe, `foeattack` is the foe against you. The defender's policy (set by
@@ -555,6 +815,44 @@ function runExchange(
   let weaponHalfMax: { half: number; max: number } | null = null;
   const meleeWeapon = opts.ranged ? null : readyMeleeFor(attacker.character, found.id);
   const rangedWeapon = opts.ranged ? readyRangedFor(attacker.character, found.id) : null;
+  const attackWeapon = meleeWeapon ?? rangedWeapon;
+  if (attackWeapon && attacker.meleeUnready === attackWeapon.name) {
+    return [`The ${attackWeapon.name} is unready after your last attack. Take Ready first: ready (p. 20).`];
+  }
+
+  // Two-handed weapons and shields (p. 20): the shield hand cannot also wield
+  // the weapon. At 1.5x minimum ST one-handed use is possible but leaves the
+  // weapon unready; at 2x ST there is no penalty. Bows and pump shotguns
+  // always require two hands.
+  let oneHandedUnready = false;
+  const gripMinST = attackWeapon?.minST ?? null;
+  const rawGripST = attacker.character.attributes.ST;
+  if (attackWeapon && attackWeapon.grip.includes("†") && gripMinST !== null && attacker.character.readyShield) {
+    const alwaysTwo = rangedWeapon !== null && ["longbow", "short bow", "pump shotgun, 12g"].includes(rangedWeapon.name.toLowerCase());
+    if (alwaysTwo) {
+      return [`The ${attackWeapon.name} always requires two hands, so it cannot be used with ${attacker.character.readyShield} readied. Ready the shield away first: ready shield none (p. 20).`];
+    }
+    const oneHandedST = Math.ceil(1.5 * gripMinST);
+    const noPenaltyST = 2 * gripMinST;
+    if (rawGripST < oneHandedST) {
+      return [
+        `The ${attackWeapon.name} requires two hands. With ${attacker.character.readyShield} readied, one-handed use needs ` +
+          `ST ${oneHandedST} (unready after attacking) or ST ${noPenaltyST} (no penalty); ${attackerName} has ST ${rawGripST}. ` +
+          `Alternatively, ready shield none (p. 20).`,
+      ];
+    }
+    oneHandedUnready = rawGripST < noPenaltyST;
+  }
+  const doubleDaggerUnready = attackWeapon?.grip === "‡" && gripMinST !== null && rawGripST < Math.ceil(1.5 * gripMinST);
+  const unreadyAfterAttack = oneHandedUnready || doubleDaggerUnready;
+  const shotsInfo = rangedWeapon ? parseShots(rangedWeapon.shots) : null;
+  if (shotsInfo && !shotsInfo.thrown) {
+    attacker.shotsLeft ??= shotsInfo.count;
+    if (attacker.shotsLeft <= 0) {
+      const reload = shotsInfo.perShot ? `${shotsInfo.reloadSeconds} Ready seconds per shot` : `${shotsInfo.reloadSeconds} Ready seconds`;
+      return [`The ${rangedWeapon!.name} is empty. Reload with: ready (${reload}, pp. 19-20).`];
+    }
+  }
   if (damage) {
     try {
       pool = parseDicePool(damage.poolText);
@@ -627,6 +925,7 @@ function runExchange(
   const parrySkillId = combatantParrySkill(state, defender);
   const shieldDB = readyShieldDB(defender.character); // p. 19: DB aids all active defenses
   const reeling = isReeling(hitPoints(defender.character), defender.hp);
+  const postureMod = POSTURE_TABLE[defender.posture].defense;
   let choice: DefenseChoice;
   if (defenderDown) {
     choice = "none";
@@ -636,7 +935,7 @@ function runExchange(
     }
     choice = defenseOverride as DefenseChoice;
   } else if (defensePolicy === "best") {
-    const best = bestDefense(state.registry, defender.character, { parrySkillId, shieldDB, reeling });
+    const best = bestDefense(state.registry, defender.character, { parrySkillId, shieldDB, reeling, postureMod });
     if (!best) return [`${defender.character.name} has no active defense available.`];
     choice = best.choice;
   } else {
@@ -644,7 +943,7 @@ function runExchange(
   }
   if (
     choice !== "none" &&
-    defenseScore(state.registry, defender.character, choice, { parrySkillId, shieldDB, reeling }) === null
+    defenseScore(state.registry, defender.character, choice, { parrySkillId, shieldDB, reeling, postureMod }) === null
   ) {
     const df = state.combat && allFighters(state.combat).find((f) => f.combatant === defender);
     const hint =
@@ -686,6 +985,11 @@ function runExchange(
   // boost, and the Move and Attack cap of 9 on adjusted melee skill.
   const maneuverMods: Modifier[] = [...mods];
   if (opts.bonus) maneuverMods.push(opts.bonus);
+  const postureAttack = opts.ranged ? POSTURE_TABLE[defender.posture].target : POSTURE_TABLE[attacker.posture].attack;
+  if (postureAttack !== 0) {
+    const whose = opts.ranged ? `${defender.character.name} posture (${defender.posture})` : `posture (${attacker.posture})`;
+    maneuverMods.push({ label: whose, value: postureAttack });
+  }
   let maneuver = opts.maneuver ?? { kind: "attack" } as Maneuver;
   let capMelee9 = opts.capMelee9 ?? false;
   if (opts.ranged && rangedManeuver === "allout") {
@@ -747,8 +1051,12 @@ function runExchange(
   takeTurn(attacker, maneuver);
   if (aimToSpend) aimToSpend.aim = undefined;
 
-  const runOnce = () =>
-    attackExchange(
+  const runOnce = () => {
+    if (shotsInfo && !shotsInfo.thrown) {
+      if ((attacker.shotsLeft ?? 0) <= 0) return null;
+      attacker.shotsLeft = (attacker.shotsLeft ?? 0) - 1;
+    }
+    const outcome = attackExchange(
       {
         attacker,
         attackSkill: base,
@@ -757,13 +1065,23 @@ function runExchange(
         damageType: type,
         defender,
         defense: choice,
-        defenseContext: { parrySkillId, shieldDB },
+        defenseContext: { parrySkillId, shieldDB, postureMod },
         dr: wornDR(defender.character),
         halfDamage: stats !== null && atHalfDamage(stats),
       },
       state.registry,
       state.dice,
     );
+    if (attackWeapon && unreadyAfterAttack) attacker.meleeUnready = attackWeapon.name;
+    if (shotsInfo?.thrown && rangedWeapon) {
+      // Thrown weapons leave your hand; T(1) means Ready another (pp. 19-20).
+      attacker.character.readyRanged = undefined;
+      const baseName = rangedWeapon.name.replace(/ \(thrown\)$/, "").toLowerCase();
+      if (attacker.character.readyMelee?.toLowerCase() === baseName) attacker.character.readyMelee = undefined;
+      attacker.shotsLeft = null;
+    }
+    return outcome;
+  };
   const names = {
     attacker: attacker.character.name,
     defender: defender.character.name,
@@ -773,10 +1091,22 @@ function runExchange(
       ")",
     defense: choice,
   };
-  const lines = [...prefix, ...narrate(runOnce(), names)];
+  const outcomeLines = (outcome: ReturnType<typeof attackExchange>) => [
+    ...narrate(outcome, names),
+    ...concentrationDistraction(state, defender, outcome),
+  ];
+  const first = runOnce();
+  if (first === null) return [...prefix, `The ${rangedWeapon?.name ?? "weapon"} is empty. Reload with: ready.`];
+  const lines = [...prefix, ...outcomeLines(first)];
   if (opts.double) {
     lines.push("Second attack (All-Out Attack: double, p. 25):");
-    lines.push(...narrate(runOnce(), names));
+    if (attackWeapon && attacker.meleeUnready === attackWeapon.name) {
+      lines.push(`The second attack cannot happen: the ${attackWeapon.name} is unready after the first (p. 20).`);
+    } else {
+      const second = runOnce();
+      if (second === null) lines.push(`The second attack cannot happen: the ${rangedWeapon?.name ?? "weapon"} is empty. Reload with: ready.`);
+      else lines.push(...outcomeLines(second));
+    }
   }
   return lines;
 }
@@ -1076,42 +1406,16 @@ export function runCommand(state: SoloState, line: string): string[] {
       return [`${c.name} wears ${armor.name} (DR ${armor.dr}).`];
     }
 
-    case "ready": {
-      const c = state.character;
-      if (!c) return ["No character yet. Use: new <name>"];
-      const itemName = args.join(" ").trim();
-      if (itemName.toLowerCase() === "none") {
-        c.readyMelee = undefined;
-        c.readyRanged = undefined;
-        return [`${c.name} readies no weapon — a punch is thr-1 cr (p. 26). Shield stays readied.`];
-      }
-      if (!itemName) return ["Usage: ready <weapon or shield|none>"];
-      const owned = (c.equipment ?? []).find((e) => e.name.toLowerCase() === itemName.toLowerCase());
-      if (!owned) {
-        const known = findMeleeWeapon(itemName) ?? findRangedWeapon(itemName) ?? findShield(itemName);
-        return known
-          ? [`${c.name} does not own a ${known.name}. Buy it first: buy ${itemName}`]
-          : [`"${itemName}" is not in the Lite equipment tables (pp. 18-22). Browse: armory ${itemName}`];
-      }
-      const melee = findMeleeWeapon(owned.name);
-      const ranged = findRangedWeapon(owned.name) ?? findRangedWeapon(`${owned.name} (thrown)`);
-      const shield = findShield(owned.name);
-      if (!melee && !ranged && !shield) return [`${owned.name} is not a weapon or shield.`];
-      const lines: string[] = [];
-      if (melee) c.readyMelee = melee.name;
-      if (ranged) c.readyRanged = ranged.name;
-      if (shield) {
-        c.readyShield = shield.name;
-        lines.push(`${c.name} readies ${shield.name} (DB ${shield.db} to all active defenses, p. 19).`);
-      } else if (melee && ranged) {
-        lines.push(`${c.name} readies ${melee.name} — melee, and thrown (Acc ${ranged.acc}).`);
-      } else if (melee) {
-        lines.push(`${c.name} readies ${melee.name}.`);
-      } else if (ranged) {
-        lines.push(`${c.name} readies ${ranged.name} (Acc ${ranged.acc}${ranged.scopeBonus ? `+${ranged.scopeBonus} scope` : ""}).`);
-      }
-      return lines;
+    case "ready":
+      return readyTurn(state, args);
+
+    case "posture": {
+      if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+      return postureTurn(state, state.combat.you, args);
     }
+
+    case "concentrate":
+      return concentrateTurn(state, args);
 
     case "armory": {
       const word = args.join(" ").toLowerCase();
@@ -1459,12 +1763,16 @@ export function runCommand(state: SoloState, line: string): string[] {
       const current = ordered[state.combat.turnIndex % ordered.length];
       const hp = (c: Combatant) =>
         `${c.character.name} ${c.hp}` + (c.condition === "ok" ? "" : ` (${c.condition})`);
-      return [
+      const lines = [
         `Turn order by Basic Speed (p. 24): ${ordered.map((c) => c.character.name).join(", ")} — ${current.character.name} to act.`,
         `HP: ${all.map((f) => hp(f.combatant)).join(", ")}.`,
         `Defenses: ${all.map((f) => `${f.combatant.character.name} ${f.policy}`).join(", ")}.`,
         `Maneuvers: ${all.map((f) => `${f.combatant.character.name} ${maneuverName(f.combatant.maneuver)}`).join(", ")}.`,
       ];
+      if (all.some((f) => f.combatant.posture !== "standing")) {
+        lines.push(`Postures: ${all.map((f) => `${f.combatant.character.name} ${f.combatant.posture}`).join(", ")} (p. 25).`);
+      }
+      return lines;
     }
 
     case "next": {
@@ -1611,9 +1919,10 @@ export function runCommand(state: SoloState, line: string): string[] {
       }
       if (verb === "defend") return setDefensePolicy(state, actor, (rest[0] ?? "").toLowerCase(), "npc <name> defend");
       if (verb === "aim") return aimTurn(state, actor, rest);
+      if (verb === "posture") return postureTurn(state, actor, rest);
       if (verb === "alloutdefense") return takeAllOutDefense(state, actor, rest, "npc <name> alloutdefense");
       if (verb === "donothing") return doNothingTurn(state, actor);
-      return [`Usage: npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> ...`];
+      return [`Usage: npc <name> <attack|shoot|allout|moveattack|aim|posture|defend|alloutdefense|donothing> ...`];
     }
 
     case "alloutdefense": {
@@ -1668,7 +1977,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  armory [word]         Browse the armor, shield and weapon tables (pp. 18-22).",
         "  buy <item> [st <n>]   Buy equipment with your money; bows/crossbows take their own ST (p. 20).",
         "  wear <armor|none>     Wear armor; its DR reduces penetrating damage (pp. 18, 29).",
-        "  ready <item|none>     Ready a weapon or shield; combat then uses its table stats (pp. 19-22).",
+        "  ready <item|none|shield none>  Ready equipment; in combat this takes your turn, reloads, and re-readies weapons (pp. 19-22, 26).",
         "  sheet                 Print attributes, skills, wealth, gear and point total.",
         "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
         "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
@@ -1677,17 +1986,19 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  odds <skill> [mods]   Print the chance of success, no roll.",
         "  foe <path>            Load an opponent from a .gcs file; repeat to add more fighters.",
         "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
-        "  order                 Turn order (…to act), HP, conditions, defenses and maneuvers for every fighter.",
+        "  order                 Turn order (…to act), HP, conditions, postures, defenses and maneuvers for every fighter.",
         "  next                  Advance to the next fighter's turn (p. 24).",
         "  attack [<target>] <skill> [dmg 2d+1 cut] [mode swing|thrust|two hands] [vs dodge|block|parry|none] [mods]  Attack; a ready weapon supplies its table damage.",
         "  shoot [<target>] <skill> rng <yd> [dmg <pool> <type> half <1/2D> max <Max>] [allout|moveattack] [vs ...] [mods]  Ranged attack; a ready weapon supplies damage, 1/2D and Max (pp. 27-28).",
         "  aim [<target>] [acc <n>] [braced]  Aim with the ready weapon's Acc: +Acc on your next shot at that target, +1/+2 for extra seconds, +1 braced, scope +1/second (pp. 19-20, 25-27).",
+        "  posture <standing|crouching|kneeling|crawling|sitting|lying>  Change Posture; its table modifiers apply (p. 25).",
+        "  concentrate <skill or attribute> [secs <n>] [mods]  Concentrate; repeat bare concentrate until the task finishes (p. 26).",
         "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
         "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
         "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
         "  donothing             Do Nothing this turn (p. 25).",
         "  defend <dodge|block|parry|none|best>  Set your standing defense.",
-        "  npc <name> <attack|shoot|allout|moveattack|aim|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
+        "  npc <name> <attack|shoot|allout|moveattack|aim|posture|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
         "  foeattack / foeshoot / foedefend / ...  Shorthand for the one opponent; with several, use npc.",
         "  seed <n>              Seed the dice so a session repeats.",
         "  skills [word]         List skills from the Lite table.",

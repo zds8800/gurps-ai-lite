@@ -111,6 +111,8 @@ export function applyInjury(victim: Combatant, injury: number, dice: DiceSource)
           knockdownRoll.critical === "failure" || knockdownRoll.margin >= 5
             ? "unconscious"
             : "stunned";
+        // Knocked down: the victim ends up lying down (pp. 25, 30).
+        victim.posture = "lying";
       }
     }
 
@@ -169,7 +171,10 @@ export function consciousnessCheck(
     },
     dice,
   );
-  if (!roll.success) combatant.condition = "unconscious";
+  if (!roll.success) {
+    combatant.condition = "unconscious";
+    combatant.posture = "lying"; // falling unconscious leaves you on the ground (pp. 25, 29)
+  }
   return { roll, modifier, stayedConscious: roll.success };
 }
 

@@ -22,6 +22,7 @@ import { resolve } from "../core/success-roll.ts";
 import type { Modifier, RollResult } from "../core/types.ts";
 import type { Condition, InjuryEffects } from "./injury.ts";
 import { applyInjury, consciousnessCheck, isReeling, reelingDodge } from "./injury.ts";
+import type { Posture } from "./posture.ts";
 
 /** A character in a fight, with current HP tracked separately from the sheet. */
 export interface Combatant {
@@ -44,6 +45,16 @@ export interface Combatant {
   /** Block and Parry are each usable once per turn (p. 28); reset on their turn. */
   blocksUsed: number;
   parriesUsed: number;
+  /** Posture (p. 25): shapes melee attacks, active defenses, and ranged fire against them. */
+  posture: Posture;
+  /** The weapon left unready after attacking, until a Ready maneuver (p. 20). */
+  meleeUnready?: string;
+  /** Shots left in the ready ranged weapon; null = not tracking (no weapon). */
+  shotsLeft?: number | null;
+  /** A multi-second Concentrate task in progress (p. 26). */
+  concentration?: { target: string; mods: Modifier[]; secondsLeft: number };
+  /** A multi-second Ready task (a reload) in progress (pp. 19-20, 26). */
+  readyTask?: { item: string; secondsLeft: number; kind: "reready" | "reload" };
 }
 
 export function makeCombatant(character: Character): Combatant {
@@ -55,6 +66,8 @@ export function makeCombatant(character: Character): Combatant {
     maneuver: { kind: "do-nothing" },
     blocksUsed: 0,
     parriesUsed: 0,
+    posture: "standing",
+    shotsLeft: null,
   };
 }
 
@@ -66,7 +79,10 @@ export type Maneuver =
   | { kind: "all-out-attack"; option: "determined" | "double" | "strong"; ranged?: boolean }
   | { kind: "all-out-defense"; option: "increased"; defense: "dodge" | "block" | "parry" }
   | { kind: "all-out-defense"; option: "double" }
-  | { kind: "move-and-attack" };
+  | { kind: "move-and-attack" }
+  | { kind: "change-posture"; posture: Posture }
+  | { kind: "concentrate" }
+  | { kind: "ready" };
 
 /** One line for "order" and narration: "all-out attack (strong)". */
 export function maneuverName(m: Maneuver): string {
@@ -75,6 +91,9 @@ export function maneuverName(m: Maneuver): string {
     case "attack": return "attack";
     case "aim": return "aim";
     case "move-and-attack": return "move and attack";
+    case "change-posture": return `change posture (${m.posture})`;
+    case "concentrate": return "concentrate";
+    case "ready": return "ready";
     case "all-out-attack":
       // Ranged All-Out Attack has no options: a flat +1 (p. 27).
       return m.ranged ? "all-out attack (ranged, +1)" : `all-out attack (${m.option})`;
@@ -124,6 +143,8 @@ export interface DefenseContext {
   parrySkillId?: string;
   /** Reeling (p. 29): below 1/3 HP, Dodge is halved (round up). */
   reeling?: boolean;
+  /** The defender's posture modifier, applied to all active defenses (p. 25). */
+  postureMod?: number;
 }
 
 /**
@@ -138,17 +159,18 @@ export function defenseScore(
   context: DefenseContext = {},
 ): number | null {
   const shieldDB = context.shieldDB ?? 0;
+  const postureMod = context.postureMod ?? 0; // p. 25: all active defenses
   switch (choice) {
     case "dodge": {
       const dodge = dodgeScore(defender, context.encumbrance ?? 0);
-      return (context.reeling ? reelingDodge(dodge) : dodge) + shieldDB;
+      return (context.reeling ? reelingDodge(dodge) : dodge) + shieldDB + postureMod;
     }
     case "block": {
       const shield = registry.skill("shield");
       if (!shield) return null;
       const level = baseSkillLevel(defender, shield);
       if (level === null) return null;
-      return 3 + Math.floor(level / 2) + shieldDB;
+      return 3 + Math.floor(level / 2) + shieldDB + postureMod;
     }
     case "parry": {
       if (!context.parrySkillId) return null;
@@ -156,7 +178,7 @@ export function defenseScore(
       if (!skill) return null;
       const level = baseSkillLevel(defender, skill);
       if (level === null) return null;
-      return 3 + Math.floor(level / 2) + shieldDB;
+      return 3 + Math.floor(level / 2) + shieldDB + postureMod;
     }
     case "none":
       return null;
