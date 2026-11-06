@@ -15,6 +15,7 @@ import { makeCharacter, pointTotal } from "../model/attribute.ts";
 import type { AttributeId, Character } from "../model/attribute.ts";
 import { baseSkillLevel } from "../model/defaults.ts";
 import { importGcsSheet } from "../model/gcs.ts";
+import { attributeImprovementCost, skillImprovementCost } from "../model/improvement.ts";
 import { pointsToRelativeLevel } from "../model/skill.ts";
 import type { SkillDef } from "../model/skill.ts";
 import { Registry } from "../modules/loader.ts";
@@ -866,6 +867,60 @@ export function runCommand(state: SoloState, line: string): string[] {
       ];
     }
 
+    case "award": {
+      const c = state.character;
+      if (!c) return ["No character yet. Use: new <name>"];
+      const n = Number(args[0]);
+      if (!Number.isInteger(n) || n < 1) {
+        return ["Usage: award <n>  (bonus character points — usually 0-5 per session, p. 17)"];
+      }
+      c.unspentPoints = (c.unspentPoints ?? 0) + n;
+      return [`${n} bonus point${n === 1 ? "" : "s"} awarded. ${c.name} has ${c.unspentPoints} unspent (p. 17).`];
+    }
+
+    case "improve": {
+      const c = state.character;
+      if (!c) return ["No character yet. Use: new <name>"];
+      const valueRaw = args[args.length - 1];
+      const target = args.slice(0, -1).join(" ");
+      if (!target) return ["Usage: improve <ST/DX/IQ/HT> <level> or improve <skill> <points>  (p. 17)"];
+      const attr = target.toUpperCase() as AttributeId;
+      let cost: number | string;
+      let apply: () => void;
+      let what: string;
+      if (ATTRIBUTE_IDS.includes(attr)) {
+        const level = Number(valueRaw);
+        cost = attributeImprovementCost(c, attr, level);
+        if (typeof cost === "string") return [cost];
+        what = `${attr} ${c.attributes[attr]} to ${level}`;
+        apply = () => {
+          c.attributes[attr] = level;
+        };
+      } else {
+        const found = findSkillRef(state, target);
+        if (typeof found === "string") return [found];
+        const points = Number(valueRaw);
+        cost = skillImprovementCost(c, found, points);
+        if (typeof cost === "string") return [cost];
+        const current = c.skills.find((r) => r.skillId === found.id)?.points ?? 0;
+        what = `${displayName(found)} ${current} to ${points} points`;
+        apply = () => {
+          const record = c.skills.find((r) => r.skillId === found.id);
+          if (record) record.points = points;
+          else c.skills.push({ skillId: found.id, points, specialization: null });
+        };
+      }
+      const unspent = c.unspentPoints ?? 0;
+      if (cost > unspent) {
+        return [
+          `${what} costs ${cost} points; ${c.name} has ${unspent} unspent. (The GM awards points with: award <n>, p. 17.)`,
+        ];
+      }
+      apply();
+      c.unspentPoints = unspent - cost;
+      return [`${what} (cost ${cost} points). ${c.unspentPoints} unspent left.`];
+    }
+
     case "formula": {
       const word = args.join(" ").trim();
       if (!word) return ["Usage: formula <skill>"];
@@ -1139,6 +1194,7 @@ export function runCommand(state: SoloState, line: string): string[] {
         if (ready.length > 0) lines.push(`  Readied: ${ready.join(", ")}.`);
       }
       lines.push(`Point total: ${pointTotal(c)}.`);
+      lines.push(`Unspent points: ${c.unspentPoints ?? 0} (award/improve, p. 17).`);
       return lines;
     }
 
@@ -1605,6 +1661,8 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  load <path>           Load a character from a .gcs file (GCS 5).",
         "  set <ST/DX/IQ/HT> <n> Set a basic attribute.",
         "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
+        "  award <n>             Award bonus character points; they sit as unspent on the sheet (p. 17).",
+        "  improve <ST/DX/IQ/HT> <level> | improve <skill> <points>  Spend unspent points at creation costs (p. 17).",
         "  tl <0-12>             Set the campaign tech level (gates purchases; sets starting wealth, pp. 7, 18).",
         "  wealth <level>        Set wealth level and reset money: dead broke ... filthy rich (p. 8).",
         "  armory [word]         Browse the armor, shield and weapon tables (pp. 18-22).",

@@ -56,6 +56,8 @@ export interface Character {
   modifiers: Modifier[];
   /** Wealth level (p. 8); the CLI prices purchases against it. Default average. */
   wealthLevel?: string;
+  /** Bonus character points awarded but not yet spent (p. 17). */
+  unspentPoints?: number;
   /** Money on hand in $ (starting wealth by TL, p. 18, times the level's multiplier). */
   money?: number;
   /** Owned gear (pp. 18-22). */
