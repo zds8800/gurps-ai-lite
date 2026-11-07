@@ -100,3 +100,79 @@ test("a non-GCS value is rejected outright", () => {
   assert.throws(() => importGcsSheet({ hello: "world" }, registry()), /Not a GCS character sheet/);
   assert.throws(() => importGcsSheet("nope", registry()), /Not a GCS character sheet/);
 });
+
+test("equipment imports ownership, quantities and every ready/worn slot without changing points (issue #47)", () => {
+  const { character, notes } = importGcsSheet(loadFixture("equipped-duelist.gcs"), registry());
+  assert.deepEqual(notes, []);
+  assert.deepEqual(
+    character.equipment?.map((item) => item.name),
+    ["Broadsword", "Small Shield", "Leather Armor", "Large Knife", "Large Knife", "Auto Pistol, 9mm"],
+  );
+  assert.equal(character.readyMelee, "Broadsword");
+  assert.equal(character.readyRanged, "Auto Pistol, 9mm");
+  assert.equal(character.readyShield, "Small Shield");
+  assert.equal(character.wornArmor, "Leather Armor");
+  assert.equal(pointTotal(character), 94); // equipment is bought with money, not character points
+});
+
+test("equipment containers, unknown items and competing equipped slots are all explicit", () => {
+  const { character, notes } = importGcsSheet({
+    profile: { name: "Gear Edge" },
+    attributes: [],
+    skills: [],
+    equipment: [
+      {
+        id: "E1",
+        name: "Duel Kit",
+        children: [
+          { id: "e1", name: "Rapier", equipped: true },
+          { id: "e2", name: "Broadsword", equipped: true },
+          { id: "e3", name: "Small Shield", equipped: false },
+          { id: "e4", name: "Vibroblade", equipped: true },
+        ],
+      },
+      { id: "e5", name: "Small Shield", equipped: true },
+      { id: "e6", name: "Medium Shield", equipped: true },
+      { id: "e7", name: "Leather Armor", equipped: true },
+      { id: "e8", name: "Mail", equipped: true },
+    ],
+  }, registry());
+  assert.deepEqual(notes.slice(4), [
+    '"Duel Kit" is an equipment grouping folder; its contents were loaded without the folder.',
+    '"Broadsword" is equipped, but "Rapier" already occupies the ready melee weapon slot; ' +
+      '"Broadsword" remains owned but is not readied/worn.',
+    '"Vibroblade" is not in the Lite equipment tables (pp. 18-22); left off the sheet.',
+    '"Medium Shield" is equipped, but "Small Shield" already occupies the ready shield slot; ' +
+      '"Medium Shield" remains owned but is not readied/worn.',
+    '"Mail" is equipped, but "Leather Armor" already occupies the worn armor slot; ' +
+      '"Mail" remains owned but is not readied/worn.',
+  ]);
+  assert.equal(character.readyMelee, "Rapier");
+  assert.equal(character.readyRanged, undefined);
+  assert.equal(character.readyShield, "Small Shield");
+  assert.equal(character.wornArmor, "Leather Armor");
+  assert.equal(character.equipment?.filter((item) => item.name === "Small Shield").length, 2);
+  assert.ok(character.equipment?.some((item) => item.name === "Broadsword"));
+  assert.ok(character.equipment?.some((item) => item.name === "Medium Shield"));
+  assert.ok(character.equipment?.some((item) => item.name === "Mail"));
+  assert.ok(!character.equipment?.some((item) => item.name === "Vibroblade"));
+  assert.equal(pointTotal(character), 0);
+});
+
+test("a bow's own ST imports, while an invalid quantity is reported and skipped", () => {
+  const { character, notes } = importGcsSheet({
+    attributes: [],
+    skills: [],
+    equipment: [
+      { name: "Short Bow", quantity: 1, equipped: true, strength: 12 },
+      { name: "Rapier", quantity: 1.5, equipped: true },
+    ],
+  }, registry());
+  assert.deepEqual(character.equipment, [{ name: "Short Bow", st: 12 }]);
+  assert.equal(character.readyRanged, "Short Bow");
+  assert.equal(character.readyMelee, undefined);
+  assert.equal(
+    notes[4],
+    '"Rapier" has invalid quantity 1.5; expected a non-negative whole number. Left off.',
+  );
+});
