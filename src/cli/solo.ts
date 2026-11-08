@@ -1455,8 +1455,13 @@ export function runCommand(state: SoloState, line: string): string[] {
       return concentrateTurn(state, args);
 
     case "armory": {
-      const word = args.join(" ").toLowerCase();
-      const match = (n: string) => !word || n.toLowerCase().includes(word);
+      const word = args.join(" ").trim().toLowerCase();
+      const compact = word.replace(/\s+/g, "");
+      const match = (name: string, skillId?: string, tl?: number) => {
+        if (!word) return true;
+        if (name.toLowerCase().includes(word) || skillId?.includes(word)) return true;
+        return tl !== undefined && (compact === `tl${tl}` || compact === String(tl));
+      };
       const dmgMode = (m: WeaponDamage) =>
         `${m.base}${m.adds > 0 ? `+${m.adds}` : m.adds < 0 ? `${m.adds}` : ""} ${m.type}`;
       const lines: string[] = [`Campaign TL${state.tl} — items above your TL cannot be bought (p. 19).`];
@@ -1464,7 +1469,7 @@ export function runCommand(state: SoloState, line: string): string[] {
       if (armors.length) lines.push("Armor (p. 18):", ...armors.map((a) => `  ${a.name} — DR ${a.dr}, ${formatMoney(a.cost)}, ${a.weight} lb`));
       const shields = SHIELD_TABLE.filter((s) => match(s.name));
       if (shields.length) lines.push("Shields (p. 19):", ...shields.map((s) => `  ${s.name} — DB ${s.db}, ${formatMoney(s.cost)}, ${s.weight} lb`));
-      const melees = MELEE_WEAPON_TABLE.filter((w) => match(w.name));
+      const melees = MELEE_WEAPON_TABLE.filter((w) => match(w.name, w.skillId, w.tl));
       if (melees.length)
         lines.push(
           "Melee weapons (pp. 20-21):",
@@ -1474,7 +1479,7 @@ export function runCommand(state: SoloState, line: string): string[] {
               `${formatMoney(w.cost)}, ${w.weight} lb, min ST ${w.minST ?? "–"}${w.grip}`,
           ),
         );
-      const rangeds = RANGED_WEAPON_TABLE.filter((w) => match(w.name));
+      const rangeds = RANGED_WEAPON_TABLE.filter((w) => match(w.name, w.skillId, w.tl));
       if (rangeds.length)
         lines.push(
           "Ranged weapons (pp. 21-22):",
@@ -2014,55 +2019,7 @@ export function runCommand(state: SoloState, line: string): string[] {
     }
 
     case "help":
-      return [
-        "Commands:",
-        "  new <name>            Start a character at 10 in everything.",
-        "  load <path>           Load a character from a .gcs file (GCS 5).",
-        "  set <ST/DX/IQ/HT> <n> Set a basic attribute.",
-        "  learn <skill> <points>  Add a skill with points (printed costs only: 1, 2, 4, 8, ...).",
-        "  award <n>             Award bonus character points; they sit as unspent on the sheet (p. 17).",
-        "  improve <ST/DX/IQ/HT> <level> | improve <skill> <points>  Spend unspent points at creation costs (p. 17).",
-        "  traits [word]         Browse every Lite advantage/disadvantage, variant and exact cost (pp. 6-12).",
-        "  add <trait> [variant] [level] [note <text>]  Add a trait at creation; printed costs only.",
-        "  language <name> <spoken> <written> [native]  Add comprehension; levels none/broken/accented/native (p. 7).",
-        "  quirk <description>   Add one of up to five quirks, -1 point each (p. 12).",
-        "  limit <n|none>        Set the GM disadvantage cap as a positive magnitude; no default cap (pp. 4, 10).",
-        "  gain <trait|language> ... [gm]  Spend unspent points; languages/Status/Combat Reflexes normally allowed (p. 17).",
-        "  buyoff <trait|quirk> ...  Spend unspent points equal to a disadvantage's printed cost (quirks cost 1).",
-        "  selfcontrol <trait> [mods]  Optional 3d self-control roll against 12, with situational modifiers (p. 10).",
-        "  sense <vision|hearing|taste-smell|touch|danger> [darkness n] [mods]  Perception roll with trait bonuses (pp. 6, 8-10).",
-        "  tl <0-12>             Set the campaign tech level (gates purchases; sets starting wealth, pp. 7, 18).",
-        "  wealth <level>        Set wealth level and reset money: dead broke ... filthy rich (p. 8).",
-        "  armory [word]         Browse the armor, shield and weapon tables (pp. 18-22).",
-        "  buy <item> [st <n>]   Buy equipment with your money; bows/crossbows take their own ST (p. 20).",
-        "  wear <armor|none>     Wear armor; its DR reduces penetrating damage (pp. 18, 29).",
-        "  ready <item|none|shield none>  Ready equipment; in combat this takes your turn, reloads, and re-readies weapons (pp. 19-22, 26).",
-        "  sheet                 Print attributes, skills, wealth, gear and point total.",
-        "  test <skill or attribute> [+n or -n ...]  Make a success roll.",
-        "  contest <skill or attribute> [mods] vs <number>  Quick Contest against an opponent's effective skill.",
-        "  react [predetermined] [+n or -n ...]  Reaction roll: 3d plus modifiers, read on the Reaction Table (p. 3).",
-        "  formula <skill>       Explain a skill: attribute, difficulty, default, costs, your level.",
-        "  odds <skill> [mods]   Print the chance of success, no roll.",
-        "  foe <path>            Load an opponent from a .gcs file; repeat to add more fighters.",
-        "  fight                 Demo fight in one word: Mara Voss vs the edge-case sheet (restarts it too).",
-        "  order                 Turn order (…to act), HP, conditions, postures, defenses and maneuvers for every fighter.",
-        "  next                  Advance to the next fighter's turn (p. 24).",
-        "  attack [<target>] <skill> [dmg 2d+1 cut] [mode swing|thrust|two hands] [vs dodge|block|parry|none] [mods]  Attack; a ready weapon supplies its table damage.",
-        "  shoot [<target>] <skill> rng <yd> [dmg <pool> <type> half <1/2D> max <Max>] [allout|moveattack] [vs ...] [mods]  Ranged attack; a ready weapon supplies damage, 1/2D and Max (pp. 27-28).",
-        "  aim [<target>] [acc <n>] [braced]  Aim with the ready weapon's Acc: +Acc on your next shot at that target, +1/+2 for extra seconds, +1 braced, scope +1/second (pp. 19-20, 25-27).",
-        "  posture <standing|crouching|kneeling|crawling|sitting|lying>  Change Posture; its table modifiers apply (p. 25).",
-        "  concentrate <skill or attribute> [secs <n>] [mods]  Concentrate; repeat bare concentrate until the task finishes (p. 26).",
-        "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
-        "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
-        "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",
-        "  donothing             Do Nothing this turn (p. 25).",
-        "  defend <dodge|block|parry|none|best>  Set your standing defense.",
-        "  npc <name> <attack|shoot|allout|moveattack|aim|posture|defend|alloutdefense|donothing> [...]  A fighter acts; target defaults to you.",
-        "  foeattack / foeshoot / foedefend / ...  Shorthand for the one opponent; with several, use npc.",
-        "  seed <n>              Seed the dice so a session repeats.",
-        "  skills [word]         List skills from the Lite table.",
-        "  help, quit",
-      ];
+      return state.combat ? combatHelp() : generalHelp();
 
     case "quit":
       return ["__QUIT__"];
@@ -2070,6 +2027,79 @@ export function runCommand(state: SoloState, line: string): string[] {
     default:
       return [`Unknown command "${verb}". Type help.`];
   }
+}
+
+/** Outside a fight: character, testing, social and equipment commands, A-Z. */
+function generalHelp(): string[] {
+  return [
+    "Non-combat commands (alphabetical; help changes when a fight starts):",
+    "  add <trait> [...]      Add an advantage/disadvantage at creation.",
+    "  armory [name|skill|tlN]  Browse gear by name, skill category, or exact TL (pp. 18-22).",
+    "  award <n>             Award unspent character points (p. 17).",
+    "  buy <item> [st <n>]   Buy and ready equipment; bows/crossbows take their own ST.",
+    "  buyoff <trait|quirk>  Spend unspent points to remove a disadvantage or quirk.",
+    "  contest <skill> [mods] vs <number>  Resolve a Quick Contest.",
+    "  fight                 Start a fresh Mara Voss versus Edge Case demo fight.",
+    "  foe <path>            Load a .gcs opponent and enter combat; repeat to add fighters.",
+    "  formula <skill>       Explain a skill's default, costs, and your level.",
+    "  gain <trait|language> [...] [gm]  Buy an allowed improvement with unspent points.",
+    "  help                  Show this context-sensitive command list.",
+    "  improve <attribute|skill> <target>  Spend unspent points at creation costs (p. 17).",
+    "  language <name> <spoken> <written> [native]  Add language comprehension (p. 7).",
+    "  learn <skill> <points>  Learn a skill using only printed costs.",
+    "  limit <n|none>        Set or clear the GM disadvantage cap.",
+    "  load <path>           Load a GCS 5 character sheet.",
+    "  new <name>            Start a character with all basic attributes at 10.",
+    "  odds <skill> [mods]   Show success probability without rolling.",
+    "  quirk <description>   Add a -1 point quirk (up to five).",
+    "  quit                  Exit the solo CLI.",
+    "  react [predetermined] [mods]  Make a Reaction roll (p. 3).",
+    "  ready <item|none|shield none>  Ready owned gear; no turn cost outside combat.",
+    "  seed <n>              Seed dice so a session repeats.",
+    "  selfcontrol <trait> [mods]  Make an optional self-control roll (p. 10).",
+    "  sense <type> [darkness n] [mods]  Make a Perception sense roll.",
+    "  set <ST|DX|IQ|HT> <n> Set a basic attribute.",
+    "  sheet                 Show attributes, skills, traits, gear, and point total.",
+    "  skills [word]         Browse the Lite skill list.",
+    "  test <skill|attribute> [mods]  Make a success roll.",
+    "  tl <0-12>             Set campaign TL and starting wealth (pp. 7, 18).",
+    "  traits [word]         Browse Lite traits and their exact costs (pp. 6-12).",
+    "  wealth <level>        Set Wealth level and reset starting money (p. 8).",
+    "  wear <armor|none>     Wear or remove armor.",
+  ];
+}
+
+/** During a fight: maneuvers, exchanges and shared combat utilities, A-Z. */
+function combatHelp(): string[] {
+  return [
+    "Combat commands (alphabetical; help outside combat lists non-combat commands):",
+    "  aim [<target>] [acc <n>] [braced]  Aim a readied ranged weapon (pp. 25-27).",
+    "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack (p. 25).",
+    "  alloutdefense <increased dodge|block|parry|double>  All-Out Defense (p. 25).",
+    "  attack [<target>] <skill> [dmg ...] [mode ...] [vs ...] [mods]  Melee attack.",
+    "  concentrate <skill|attribute> [secs <n>] [mods]  Concentrate for one or more turns.",
+    "  defend <dodge|block|parry|none|best>  Set your standing defense policy.",
+    "  donothing            Take the Do Nothing maneuver (p. 25).",
+    "  foe <path>            Add another .gcs fighter to the current battle.",
+    "  foeallout <option> <skill> [...]  One opponent makes an All-Out Attack.",
+    "  foealloutdefense <increased ...|double>  One opponent takes All-Out Defense.",
+    "  foeattack <skill> [dmg ...] [vs ...] [mods]  One opponent attacks you.",
+    "  foedefend <defense>   Set one opponent's standing defense policy.",
+    "  foedonothing          One opponent takes Do Nothing.",
+    "  foemoveattack <skill> [...]  One opponent uses Move and Attack.",
+    "  foeshoot <skill> rng <yd> [...]  One opponent shoots at you.",
+    "  help                  Show this context-sensitive command list.",
+    "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9.",
+    "  next                  Advance to the next fighter's turn (p. 24).",
+    "  npc <name> <action> [<target>] [...]  Any NPC acts; target defaults to you.",
+    "  order                 Show turn order, HP, conditions, defenses and maneuvers.",
+    "  posture <standing|crouching|kneeling|crawling|sitting|lying>  Change Posture.",
+    "  quit                  Exit the solo CLI.",
+    "  ready <item|none|shield none>  Take Ready; reload or re-ready equipment.",
+    "  seed <n>              Seed dice so a session repeats.",
+    "  sheet                 Show your character and current equipment.",
+    "  shoot [<target>] <skill> rng <yd> [...]  Make a ranged attack (pp. 27-28).",
+  ];
 }
 
 function verbAlias(verb: string): string {
