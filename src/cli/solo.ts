@@ -40,7 +40,7 @@ import {
   turnOrder,
 } from "../combat/attack.ts";
 import { consciousnessCheck, isReeling, stunRecovery } from "../combat/injury.ts";
-import { atHalfDamage, outOfRange, rangeModifier } from "../combat/ranged.ts";
+import { atHalfDamage, outOfRange, rangeModifier, speedToYardsPerSecond } from "../combat/ranged.ts";
 import type { RangeStats } from "../combat/ranged.ts";
 import {
   ARMOR_TABLE,
@@ -250,6 +250,21 @@ function resolveTarget(state: SoloState, args: string[]): { target: Fighter; res
   return [
     `Attack whom? Name the target first — fighters: ${combat.npcs.map((f) => f.combatant.character.name).join(", ")}.`,
   ];
+}
+
+/** Cover is an explicit scene fact: its DR protects the fighter (p. 29). */
+function coverScene(state: SoloState, args: string[]): string[] {
+  if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
+  if (args.length < 2) return ["Usage: cover <fighter> <DR|none>  (cover adds its DR to armor, p. 29)"];
+  const rawDR = args.at(-1)!.toLowerCase();
+  const m = matchFighter(allFighters(state.combat), args.slice(0, -1));
+  if (m === null) return [`No fighter named "${args.slice(0, -1).join(" ")}".`];
+  if (typeof m === "string") return [m];
+  const dr = rawDR === "none" ? 0 : Number(rawDR);
+  if (!Number.isInteger(dr) || dr < 0) return [`Bad cover DR "${rawDR}". Give a whole-number DR, 0 or more, or none.`];
+  m.fighter.combatant.coverDR = dr;
+  const name = m.fighter.combatant.character.name;
+  return [dr === 0 ? `${name} has no cover.` : `${name} has cover DR ${dr}; it adds to armor DR against hits (p. 29).`];
 }
 
 /** Set a fighter's standing defense (p. 28); shared by defend and npc. */
@@ -765,6 +780,8 @@ function runExchange(
   let defenseOverride: string | null = null;
   let modeWord: string | null = null;
   let range: Partial<Record<"rng" | "half" | "max", number>> = {};
+  let targetSpeed = 0;
+  let speedLabel: string | null = null;
   let rangedManeuver: "allout" | "moveattack" | null = null;
   const traitContext: AttackTraitContext = {};
   for (let i = 0; i < args.length; i++) {
@@ -783,6 +800,21 @@ function runExchange(
       const value = Number(args[i + 1]);
       if (!Number.isFinite(value) || value < 0) return [`Bad ${t} value "${args[i + 1] ?? ""}". Give yards as a number, 0 or more.`];
       range[t.toLowerCase() as "rng" | "half" | "max"] = value;
+      i += 1;
+    } else if (t.toLowerCase() === "speed") {
+      const value = Number(args[i + 1]);
+      if (!Number.isFinite(value) || value < 0) return [`Bad speed "${args[i + 1] ?? ""}". Give a number, 0 or more.`];
+      let unit = "yd/s";
+      if (args[i + 2] && /^[a-z/]+$/i.test(args[i + 2])) {
+        unit = args[i + 2].toLowerCase();
+        i += 1;
+      }
+      try {
+        targetSpeed = speedToYardsPerSecond(value, unit);
+      } catch (error) {
+        return [(error as Error).message];
+      }
+      speedLabel = unit === "mph" ? `${value} mph = ${targetSpeed} yd/s` : `${targetSpeed} yd/s`;
       i += 1;
     } else if (["allout", "moveattack"].includes(t.toLowerCase())) {
       if (!opts.ranged) return [`"${t}" as a flag is only for shoot; melee uses the ${t} command with its own options (p. 25).`];
@@ -805,6 +837,7 @@ function runExchange(
   if (!opts.ranged && (range.rng !== undefined || range.half !== undefined || range.max !== undefined)) {
     return [`rng/half/max are for ranged attacks: use shoot <skill> [dmg <pool> <type>] rng <yards> [half <1/2D> max <Max>] (p. 27).`];
   }
+  if (!opts.ranged && speedLabel !== null) return ["Target speed is for ranged attacks: use shoot ... speed <n> [mph|yd/s] (pp. 27-28)."];
   const found = findSkillRef(state, skillWords.join(" "));
   if (typeof found === "string") return [found];
   const mods = parseModifiers(modTokens);
@@ -939,6 +972,8 @@ function runExchange(
   const shieldDB = readyShieldDB(defender.character); // p. 19: DB aids all active defenses
   const reeling = isReeling(hitPoints(defender.character), defender.hp);
   const postureMod = POSTURE_TABLE[defender.posture].defense;
+  const thrownWeaponWeight = shotsInfo?.thrown ? rangedWeapon?.weight : undefined;
+  const defenseContext = { parrySkillId, shieldDB, postureMod, thrownWeaponWeight };
   let choice: DefenseChoice;
   if (defenderDown) {
     choice = "none";
@@ -948,7 +983,7 @@ function runExchange(
     }
     choice = defenseOverride as DefenseChoice;
   } else if (defensePolicy === "best") {
-    const best = bestDefense(state.registry, defender.character, { parrySkillId, shieldDB, reeling, postureMod });
+    const best = bestDefense(state.registry, defender.character, { ...defenseContext, reeling });
     if (!best) return [`${defender.character.name} has no active defense available.`];
     choice = best.choice;
   } else {
@@ -956,7 +991,7 @@ function runExchange(
   }
   if (
     choice !== "none" &&
-    defenseScore(state.registry, defender.character, choice, { parrySkillId, shieldDB, reeling, postureMod }) === null
+    defenseScore(state.registry, defender.character, choice, { ...defenseContext, reeling }) === null
   ) {
     const df = state.combat && allFighters(state.combat).find((f) => f.combatant === defender);
     const hint =
@@ -1016,7 +1051,11 @@ function runExchange(
     capMelee9 = false;
   }
   if (stats) {
-    maneuverMods.push({ label: `range ${stats.range} yd`, value: rangeModifier(stats.range) });
+    const speedAndRange = stats.range + targetSpeed;
+    const label = speedLabel
+      ? `speed/range ${speedAndRange} yd (range ${stats.range} + speed ${speedLabel})`
+      : `range ${stats.range} yd`;
+    maneuverMods.push({ label, value: rangeModifier(speedAndRange) });
   }
   // Aim (pp. 25-27): a ranged Attack or All-Out Attack against the aimed
   // target gets Acc plus extra-aim and braced bonuses. Any attack spends the
@@ -1079,9 +1118,10 @@ function runExchange(
         damageType: type,
         defender,
         defense: choice,
-        defenseContext: { parrySkillId, shieldDB, postureMod },
+        defenseContext,
         traitContext,
         dr: wornDR(defender.character),
+        coverDR: defender.coverDR,
         halfDamage: stats !== null && atHalfDamage(stats),
       },
       state.registry,
@@ -1103,6 +1143,7 @@ function runExchange(
     attackLabel:
       `${weaponLabel ?? displayName(found)} (${formatDicePool(pool)} ${type}` +
       (stats ? `, rng ${stats.range} yd` : "") +
+      (speedLabel ? `, target speed ${speedLabel}` : "") +
       ")",
     defense: choice,
   };
@@ -1901,6 +1942,9 @@ export function runCommand(state: SoloState, line: string): string[] {
       });
     }
 
+    case "cover":
+      return coverScene(state, args);
+
     case "shoot": {
       if (!state.combat) return ["No fight yet. Load yourself (new/load) and a foe: foe <file>."];
       const t = resolveTarget(state, args);
@@ -2048,10 +2092,11 @@ export function runCommand(state: SoloState, line: string): string[] {
         "  order                 Turn order (…to act), HP, conditions, postures, defenses and maneuvers for every fighter.",
         "  next                  Advance to the next fighter's turn (p. 24).",
         "  attack [<target>] <skill> [dmg 2d+1 cut] [mode swing|thrust|two hands] [vs dodge|block|parry|none] [mods]  Attack; a ready weapon supplies its table damage.",
-        "  shoot [<target>] <skill> rng <yd> [dmg <pool> <type> half <1/2D> max <Max>] [allout|moveattack] [vs ...] [mods]  Ranged attack; a ready weapon supplies damage, 1/2D and Max (pp. 27-28).",
+        "  shoot [<target>] <skill> rng <yd> [speed <n> [mph|yd/s]] [dmg <pool> <type> half <1/2D> max <Max>] [allout|moveattack] [vs ...] [mods]  Ranged attack; speed adds to range (pp. 27-28).",
         "  aim [<target>] [acc <n>] [braced]  Aim with the ready weapon's Acc: +Acc on your next shot at that target, +1/+2 for extra seconds, +1 braced, scope +1/second (pp. 19-20, 25-27).",
         "  posture <standing|crouching|kneeling|crawling|sitting|lying>  Change Posture; its table modifiers apply (p. 25).",
         "  concentrate <skill or attribute> [secs <n>] [mods]  Concentrate; repeat bare concentrate until the task finishes (p. 26).",
+        "  cover <fighter> <DR|none>  Set or clear cover DR; it adds to armor DR on a hit (p. 29).",
         "  allout <determined|double|strong> [<target>] <skill> [...]  All-Out Attack: +4, two attacks, or +2 damage; no defense till next turn (p. 25).",
         "  moveattack [<target>] <skill> [...]  Move and Attack: -4, melee skill capped at 9, no parry till next turn (p. 25).",
         "  alloutdefense <increased dodge|block|parry | double>  All-Out Defense (p. 25).",

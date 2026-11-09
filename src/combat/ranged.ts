@@ -43,6 +43,20 @@ export function rangeModifier(yards: number): number {
   }
 }
 
+/**
+ * Target speed for the Size and Speed/Range Table (pp. 27-28). Lite's
+ * deliberately simple vehicle conversion is yards/second = half mph.
+ */
+export function speedToYardsPerSecond(speed: number, unit = "yd/s"): number {
+  if (!Number.isFinite(speed) || speed < 0) {
+    throw new Error(`Bad speed "${speed}". Give a number, 0 or more.`);
+  }
+  const normalized = unit.toLowerCase();
+  if (normalized === "mph") return speed / 2;
+  if (["yd/s", "yards/second", "yards/sec"].includes(normalized)) return speed;
+  throw new Error(`Bad speed unit "${unit}". Use mph or yd/s (yards/second).`);
+}
+
 /** A ranged weapon's range stats (p. 27), handed in — no equipment model yet. */
 export interface RangeStats {
   /** Distance to the target in yards. */
