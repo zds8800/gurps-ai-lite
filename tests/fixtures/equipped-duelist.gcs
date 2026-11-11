@@ -1,0 +1,79 @@
+{
+  "version": 4,
+  "id": "E9u1pp3dDuel1st47a0b82c6f5e19403bd",
+  "total_points": 94,
+  "profile": {
+    "name": "Equipped Duelist",
+    "notes": "Synthetic GCS 5 equipment-import fixture for issue #47. Equipment names are references to the Lite tables, not copied table data."
+  },
+  "attributes": [
+    { "attr_id": "st", "adj": 2, "calc": { "value": 12, "points": 20 } },
+    { "attr_id": "dx", "adj": 2, "calc": { "value": 12, "points": 40 } },
+    { "attr_id": "iq", "adj": 0, "calc": { "value": 10, "points": 0 } },
+    { "attr_id": "ht", "adj": 1, "calc": { "value": 11, "points": 10 } }
+  ],
+  "skills": [
+    {
+      "id": "sE9u1pp3dDuel1st0000000001",
+      "name": "Broadsword",
+      "difficulty": "dx/a",
+      "points": 12,
+      "reference": "L15",
+      "calc": { "level": 15, "relative_level": "DX+3", "points": 12 }
+    },
+    {
+      "id": "sE9u1pp3dDuel1st0000000002",
+      "name": "Shield",
+      "difficulty": "dx/e",
+      "points": 8,
+      "reference": "L16",
+      "calc": { "level": 14, "relative_level": "DX+2", "points": 8 }
+    },
+    {
+      "id": "sE9u1pp3dDuel1st0000000003",
+      "name": "Guns",
+      "tech_level": "6",
+      "difficulty": "dx/e",
+      "points": 4,
+      "reference": "L16",
+      "calc": { "level": 14, "relative_level": "DX+2", "points": 4 }
+    }
+  ],
+  "equipment": [
+    {
+      "id": "eE9u1pp3dDuel1st000000001",
+      "name": "Broadsword",
+      "quantity": 1,
+      "equipped": true,
+      "reference": "L20"
+    },
+    {
+      "id": "eE9u1pp3dDuel1st000000002",
+      "name": "Small Shield",
+      "quantity": 1,
+      "equipped": true,
+      "reference": "L19"
+    },
+    {
+      "id": "eE9u1pp3dDuel1st000000003",
+      "name": "Leather Armor",
+      "quantity": 1,
+      "equipped": true,
+      "reference": "L18"
+    },
+    {
+      "id": "eE9u1pp3dDuel1st000000004",
+      "name": "Large Knife",
+      "quantity": 2,
+      "equipped": false,
+      "reference": "L20"
+    },
+    {
+      "id": "eE9u1pp3dDuel1st000000005",
+      "name": "Auto Pistol, 9mm",
+      "quantity": 1,
+      "equipped": true,
+      "reference": "L21"
+    }
+  ]
+}
