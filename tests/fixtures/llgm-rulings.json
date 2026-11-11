@@ -1,0 +1,41 @@
+{
+  "corridor": {
+    "type": "house_rule",
+    "scope": "this_attempt",
+    "exampleCase": "Breaking through wooden slats with a baton",
+    "ruling": {
+      "type": "skill_check",
+      "skill": "baton",
+      "modifier": -2,
+      "outcomes": [
+        {
+          "success": true,
+          "minimumMargin": 0,
+          "effect": "The slats break and the service corridor becomes accessible."
+        },
+        {
+          "success": true,
+          "minimumMargin": 3,
+          "effect": "The slats splinter at once, opening immediate access to the service corridor."
+        },
+        {
+          "success": false,
+          "minimumMargin": 0,
+          "effect": "The slats hold and the corridor remains inaccessible."
+        }
+      ]
+    }
+  },
+  "silver": {
+    "type": "house_rule",
+    "scope": "this_campaign",
+    "exampleCase": "Silver weapons injure the knight",
+    "ruling": {
+      "type": "damage_multiplier",
+      "target": "knight-1",
+      "damageTag": "silver",
+      "multiplier": 2,
+      "stage": "after_DR"
+    }
+  }
+}
