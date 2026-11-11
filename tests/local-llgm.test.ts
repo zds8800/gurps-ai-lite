@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { LocalLlgmGame } from "../apps/llgm-local/game.ts";
 import { OllamaClient } from "../apps/llgm-local/protocol.ts";
+import { formatTrace } from "../apps/llgm-local/trace.ts";
 import type { ChatClient, OllamaMessage } from "../apps/llgm-local/protocol.ts";
 import { ScriptedDice } from "../src/core/dice.ts";
 
@@ -61,6 +62,10 @@ test("the flat tool loop saves a ruling, resolves real dice, and returns only fi
   assert.equal(result.total, 10);
   assert.equal(result.margin, 1);
   assert.equal(result.outcome, "The slats break and the service corridor becomes accessible.");
+  const trace = formatTrace(game.journal);
+  assert.match(trace, /Formula: 13 - 2 = 11/);
+  assert.match(trace, /Roll: 10; success by 1/);
+  assert.match(trace, /Outcome: The slats break and the service corridor becomes accessible\./);
 });
 
 test("malformed model proposals return a correctable error and save nothing", () => {

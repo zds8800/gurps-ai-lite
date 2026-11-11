@@ -316,6 +316,7 @@ export class LocalLlgmGame {
       rulingId,
       skill: rule.ruling.skill,
       baseSkill,
+      modifier: rule.ruling.modifier,
       effectiveSkill: resolution.roll.effectiveSkill,
       total: resolution.roll.total,
       success: resolution.roll.success,
