@@ -1,0 +1,11 @@
+seed 7
+new Shooter
+tl 8
+learn guns 24
+buy auto pistol, 9mm
+foe tests/fixtures/edge-case.gcs
+cover edge 5
+aim edge
+shoot edge guns rng 20 speed 30 mph vs none
+cover edge none
+quit

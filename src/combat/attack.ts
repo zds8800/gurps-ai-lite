@@ -49,6 +49,8 @@ export interface Combatant {
   parriesUsed: number;
   /** Posture (p. 25): shapes melee attacks, active defenses, and ranged fire against them. */
   posture: Posture;
+  /** Explicit cover's Damage Resistance, added to armor on a hit (p. 29). */
+  coverDR: number;
   /** The weapon left unready after attacking, until a Ready maneuver (p. 20). */
   meleeUnready?: string;
   /** Shots left in the ready ranged weapon; null = not tracking (no weapon). */
@@ -69,6 +71,7 @@ export function makeCombatant(character: Character): Combatant {
     blocksUsed: 0,
     parriesUsed: 0,
     posture: "standing",
+    coverDR: 0,
     shotsLeft: null,
   };
 }
@@ -147,6 +150,14 @@ export interface DefenseContext {
   reeling?: boolean;
   /** The defender's posture modifier, applied to all active defenses (p. 25). */
   postureMod?: number;
+  /** Incoming thrown weapon's weight in lb.; absent for non-thrown attacks (p. 28). */
+  thrownWeaponWeight?: number;
+}
+
+/** Thrown weapons are -1 to parry, or -2 at 1 lb. or less (p. 28). */
+export function thrownParryPenalty(weight?: number): number {
+  if (weight === undefined) return 0;
+  return weight <= 1 ? -2 : -1;
 }
 
 /**
@@ -181,7 +192,7 @@ export function defenseScore(
       if (!skill) return null;
       const level = baseSkillLevel(defender, skill);
       if (level === null) return null;
-      return 3 + Math.floor(level / 2) + shieldDB + postureMod + traitBonus;
+      return 3 + Math.floor(level / 2) + shieldDB + postureMod + traitBonus + thrownParryPenalty(context.thrownWeaponWeight);
     }
     case "none":
       return null;
@@ -289,8 +300,10 @@ export interface AttackSetup {
   defense: DefenseChoice;
   defenderAware?: boolean;
   defenseModifiers?: Modifier[];
-  /** Damage Resistance on the defender's side (armor, cover); default 0. */
+  /** Damage Resistance on the defender's side (armor and other sources); default 0. */
   dr?: number;
+  /** Explicit cover DR, added to other DR (p. 29); default 0. */
+  coverDR?: number;
   /** Ranged attack at or past 1/2D range: halve basic damage (p. 29). */
   halfDamage?: boolean;
   /** Explicit scene facts used by Bad Sight, Ambidexterity, Night Vision and Pacifism. */
@@ -312,6 +325,8 @@ export interface AttackOutcome {
   defenseStunned: boolean;
   /** True when the defense rolled at +2 for All-Out Defense (Increased) (p. 25). */
   defenseIncreased: boolean;
+  /** Thrown-weapon penalty included in the chosen Parry score, or 0 (p. 28). */
+  thrownParryPenalty: number;
   /** The defense actually used, after any legality fallback (pp. 28-29). */
   defenseChoiceUsed: DefenseChoice;
   /** Why the requested defense was not legal and another was used; null if none. */
@@ -325,6 +340,9 @@ export interface AttackOutcome {
   halfDamageApplied: boolean;
   /** True when a roll of 3 dealt maximum damage with no damage roll (p. 27). */
   maxDamageCrit: boolean;
+  /** Total DR subtracted, and the cover component of it (p. 29). */
+  damageResistance: number;
+  coverDRApplied: number;
   penetrating: number | null;
   injury: number | null;
   /** Shock, major-wound and death-check results of the hit (pp. 29-30); null on a miss. */
@@ -474,6 +492,8 @@ export function attackExchange(
   let penetrating: number | null = null;
   let injury: number | null = null;
   let injuryEffects: InjuryEffects | null = null;
+  const coverDRApplied = setup.coverDR ?? 0;
+  const damageResistance = (setup.dr ?? 0) + coverDRApplied;
   if (hit) {
     if (attack.total === 3) {
       // A roll of 3 is a critical hit that does maximum damage, no roll (p. 27).
@@ -482,7 +502,7 @@ export function attackExchange(
     } else {
       basic = basicDamage(rollDicePool(setup.damage, dice), setup.damageType, setup.halfDamage);
     }
-    const result = injuryFrom(basic, setup.dr ?? 0, setup.damageType);
+    const result = injuryFrom(basic, damageResistance, setup.damageType);
     penetrating = result.penetrating;
     injury = result.injury;
     // HP loss, shock, major wounds and death checks (pp. 29-30).
@@ -497,6 +517,8 @@ export function attackExchange(
     defenderConsciousness,
     defenseStunned,
     defenseIncreased,
+    thrownParryPenalty:
+      defense !== null && choice === "parry" ? thrownParryPenalty(setup.defenseContext?.thrownWeaponWeight) : 0,
     defenseChoiceUsed: defending ? choice : setup.defense,
     defenseFallback,
     defense2,
@@ -504,6 +526,8 @@ export function attackExchange(
     basicDamage: basic,
     halfDamageApplied: hit && (setup.halfDamage ?? false),
     maxDamageCrit,
+    damageResistance,
+    coverDRApplied,
     penetrating,
     injury,
     injuryEffects,
@@ -567,8 +591,11 @@ export function narrate(
     }
     const stunText = outcome.defenseStunned ? " (-4: stunned)" : "";
     const aodText = outcome.defenseIncreased ? " (+2: all-out defense)" : "";
+    const thrownText = outcome.thrownParryPenalty < 0
+      ? ` (${outcome.thrownParryPenalty}: ${outcome.thrownParryPenalty === -2 ? "small " : ""}thrown weapon)`
+      : "";
     lines.push(
-      `${names.defender} defends: ${outcome.defenseChoiceUsed} ${outcome.defenseScoreUsed}${stunText}${aodText}, ` +
+      `${names.defender} defends: ${outcome.defenseChoiceUsed} ${outcome.defenseScoreUsed}${stunText}${aodText}${thrownText}, ` +
         `rolled ${defense.total} — ${defense.success ? `success by ${defense.margin}` : `failure by ${defense.margin}`}.`,
     );
     if (defense.success) {
@@ -593,6 +620,7 @@ export function narrate(
   lines.push(
     `Hit for ${outcome.basicDamage} basic damage` +
       (outcome.halfDamageApplied ? " (halved: at or past 1/2D range, p. 27)" : "") +
+      (outcome.coverDRApplied > 0 ? `; cover DR ${outcome.coverDRApplied} (total DR ${outcome.damageResistance})` : "") +
       (outcome.penetrating !== null ? `; ${outcome.penetrating} penetrates` : "") +
       `; injury ${outcome.injury}. ${names.defender} is at HP ${outcome.defenderHpAfter}.`,
   );

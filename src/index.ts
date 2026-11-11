@@ -97,3 +97,17 @@ export type {
   RollResult,
   RollStatus,
 } from "./core/types.ts";
+export { HOUSE_RULE_SCOPES, LLGM_SYSTEM_PROMPT, parseHouseRuleCase, PROPOSAL_STATUSES } from "./llgm/contract.ts";
+export type {
+  DamageMultiplierHouseRule,
+  DamageMultiplierRuling,
+  HouseRuleCase,
+  HouseRuleScope,
+  MarginOutcome,
+  ProposalStatus,
+  SavedHouseRule,
+  SkillCheckHouseRule,
+  SkillCheckRuling,
+} from "./llgm/contract.ts";
+export { applyAcceptedDamageMultipliers, resolveSkillCheckRuling, selectMarginOutcome } from "./llgm/rulings.ts";
+export type { PostDrDamage, SkillCheckResolution } from "./llgm/rulings.ts";

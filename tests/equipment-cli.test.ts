@@ -219,3 +219,38 @@ test("a crossbow's own ST drives its damage and range (p. 20)", () => {
   const far = session(["fight", "buy crossbow st 12", "learn crossbow 2", "shoot edge crossbow rng 301"]);
   assert.ok(far.some((l) => l === "Edge Case is beyond Max range: 301 yd > 300 yd (p. 27)."), far.join("\n"));
 });
+
+test("a PC's imported ready weapon and shield work immediately in combat (issue #47)", () => {
+  const out = session([
+    "seed 7",
+    "load tests/fixtures/equipped-duelist.gcs",
+    "foe tests/fixtures/edge-case.gcs",
+    "defend dodge",
+    "attack edge broadsword",
+  ]);
+  assert.ok(out.some((l) => l.includes("Equipped Duelist loaded from file.")), out.join("\n"));
+  assert.ok(out.some((l) => l === "Equipped Duelist will dodge (dodge 9) until you change it."), out.join("\n"));
+  assert.ok(
+    out.some((l) => l.startsWith("Equipped Duelist attacks with Broadsword (swing) (1d+3 cut) (effective 15):")),
+    out.join("\n"),
+  );
+});
+
+test("an NPC's imported weapon supplies damage and its shield supplies DB (issue #47)", () => {
+  const out = session([
+    "seed 7",
+    "new M",
+    "learn brawling 1",
+    "foe tests/fixtures/equipped-duelist.gcs",
+    "foedefend block",
+    "attack equipped brawling +10",
+    "defend dodge",
+    "foeattack broadsword",
+  ]);
+  assert.ok(out.some((l) => l === "Equipped Duelist will block (block 11) until you change it."), out.join("\n"));
+  assert.ok(out.some((l) => l.startsWith("Equipped Duelist defends: block 11,")), out.join("\n"));
+  assert.ok(
+    out.some((l) => l.startsWith("Equipped Duelist attacks with Broadsword (swing) (1d+3 cut) (effective 15):")),
+    out.join("\n"),
+  );
+});

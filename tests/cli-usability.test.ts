@@ -24,7 +24,7 @@ test("combat help is alphabetical and omits shopping and creation commands", () 
   const help = runCommand(state, "help");
   const names = commandNames(help);
   assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)));
-  for (const command of ["attack", "defend", "npc", "order"]) assert.ok(names.includes(command), command);
+  for (const command of ["attack", "cover", "defend", "npc", "order"]) assert.ok(names.includes(command), command);
   for (const command of ["armory", "buy", "load", "test"]) assert.ok(!names.includes(command), command);
 });
 
